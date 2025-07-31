@@ -11,7 +11,8 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/google/uuid"
-	"github.com/gordonklaus/portaudio"
+
+	"code.byted.org/data-speech/wsclientsdk/audio"
 
 	"code.byted.org/data-speech/wsclientsdk/protogen/common/event"
 	"code.byted.org/data-speech/wsclientsdk/protogen/common/rpcmeta"
@@ -20,8 +21,8 @@ import (
 )
 
 // translateV4 sends audio chunks to server and receives translated text.
-func translateV4(conf Config, audio string, n int) {
-	audioChunks, err := readAudioChunks(audio, 3200) // chunk size: 100ms
+func translateV4(conf Config, audiofile string, n int) {
+	audioChunks, err := readAudioChunks(audiofile, 3200) // chunk size: 100ms
 	if err != nil {
 		glog.Exitf("Read audio chunks from file: %v", err)
 	}
@@ -50,7 +51,7 @@ func translateV4(conf Config, audio string, n int) {
 		},
 		TargetAudio: &base.Audio{
 			Format: "pcm",
-			Rate:   48000,
+			Rate:   16000,
 		},
 		Request: &ast.ReqParams{
 			Mode:           "s2s",
@@ -95,21 +96,27 @@ func translateV4(conf Config, audio string, n int) {
 		glog.Info("FinishSession request is sent.")
 	}()
 
-	portaudio.Initialize()
-	defer portaudio.Terminate()
-
-	outData := make([]byte, 3200)
-	stream, err := portaudio.OpenDefaultStream(0, 1, 48000, 3200, outData)
+	out, err := audio.Init()
 	if err != nil {
-		glog.Errorf("PortAudio open stream error: %v", err)
-		return
+		glog.Exitf("Initialize audio: %v", err)
 	}
-	defer stream.Close()
-	if err := stream.Start(); err != nil {
-		glog.Errorf("PortAudio start error: %v", err)
-		return
-	}
-	defer stream.Stop()
+
+	defer audio.Terminate()
+	// portaudio.Initialize()
+	// defer portaudio.Terminate()
+
+	// outData := make([]byte, 3200)
+	// stream, err := portaudio.OpenDefaultStream(0, 1, 48000, 3200, outData)
+	// if err != nil {
+	// 	glog.Errorf("PortAudio open stream error: %v", err)
+	// 	return
+	// }
+	// defer stream.Close()
+	// if err := stream.Start(); err != nil {
+	// 	glog.Errorf("PortAudio start error: %v", err)
+	// 	return
+	// }
+	// defer stream.Stop()
 
 	var recvAudio bytes.Buffer
 	var recvText strings.Builder
@@ -136,20 +143,21 @@ func translateV4(conf Config, audio string, n int) {
 		glog.V(3).Infof("Receive message: %+v", resp)
 		// 流式播放音频数据
 		if len(resp.GetData()) > 0 {
+			out.Write(resp.GetData())
 			recvAudio.Write(resp.GetData())
-			if recvAudio.Len() >= 3200 {
-				_, err := recvAudio.Read(outData)
-				if err != nil {
-					glog.Errorf("Read audio data error: %v", err)
+			// if recvAudio.Len() >= 3200 {
+			// 	_, err := recvAudio.Read(outData)
+			// 	if err != nil {
+			// 		glog.Errorf("Read audio data error: %v", err)
 
-					continue
-				}
+			// 		continue
+			// 	}
 
-				if err := stream.Write(); err != nil {
-					glog.Errorf("PortAudio write error: %v", err)
-					return
-				}
-			}
+			// 	if err := stream.Write(); err != nil {
+			// 		glog.Errorf("PortAudio write error: %v", err)
+			// 		return
+			// 	}
+			// }
 			// // playPCMStream(resp.GetData(), 48000)
 			// // 将 []byte 转为 []int16
 			// pcm16 := make([]int16, len(pcm)/2)
@@ -169,7 +177,7 @@ func translateV4(conf Config, audio string, n int) {
 
 	if recvAudio.Len() > 0 {
 		path := filepath.Join(*outdir, fmt.Sprintf("v4_translate_audio_%05d.wav", n))
-		if err := SavePCMAsWav(path, recvAudio.Bytes(), 48000); err != nil {
+		if err := SavePCMAsWav(path, recvAudio.Bytes(), 16000); err != nil {
 			glog.Exitf("Save audio file: %v", err)
 		}
 		glog.Infof("Session finished, audio is saved as: %s", path)

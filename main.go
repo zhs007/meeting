@@ -11,11 +11,11 @@ import (
 
 var (
 	// Common flags.
-	target = flag.String("target", "ast", "Target service: ast, etc.")
-	outdir = flag.String("outdir", "./", "Result output directory")
-	repeat = flag.Int("repeat", 1, "Number of repeat times")
-	audio  = flag.String("audio", "test_audio.wav", "Test audio file path")
-	mic    = flag.Bool("mic", false, "Use microphone for audio input")
+	target    = flag.String("target", "ast", "Target service: ast, etc.")
+	outdir    = flag.String("outdir", "./", "Result output directory")
+	repeat    = flag.Int("repeat", 1, "Number of repeat times")
+	audiofile = flag.String("audio", "test_audio.wav", "Test audio file path")
+	mic       = flag.Bool("mic", false, "Use microphone for audio input")
 )
 
 type Config struct {
@@ -70,7 +70,7 @@ func main() {
 		if isV4 {
 			switch *target {
 			case "ast":
-				translateV4(conf, *audio, i)
+				translateV4(conf, *audiofile, i)
 			default:
 				panic("Target not supported for v4: " + *target)
 			}
