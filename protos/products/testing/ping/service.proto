@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+import "common/events.proto";
+import "common/rpcmeta.proto";
+
+package testing;
+
+option go_package = "code.byted.org/data-speech/idls/products/testing/ping";
+
+service PingPong {
+  rpc Probe(stream Ping) returns (stream Pong);
+}
+
+// Add an alias for PingPong service. It is meant to be invoked by the client to
+// circumvent the PingPong service, which is explicitly registered in Speech
+// Gateway, so that the request can fall back into the unregistered streaming
+// handler of gateway which is then redirected internally to the registered
+// PingPong handler, ie,
+//   request(__PingPong.Probe) → Gateway (unregistered generic handler)
+//     → request(PingPong.Probe) → Gateway (registered PingPong.Probe handler)
+service __PingPong {
+  rpc Probe(stream Ping) returns (stream Pong);
+}
+
+message Ping {
+  // Always set request_meta as an "optional" field, such that when doing
+  //
+  //   option := protojson.MarshalOptions{
+  //     UseProtoNames:   true,
+  //     EmitUnpopulated: true
+  //   }
+  //   jsonString, _ := option.Marshal(&Ping{
+  //     RequestMeta: nil,
+  //   })
+  //
+  // it will not emit a null value in jsonString like:
+  //
+  //   {"request_meta":null,"event":"None"}  (✗)
+  //    ^^^^^^^^^^^^^^^^^^^
+  //
+  // but instead, it will simply output:
+  //
+  //   {"event":"None"}  (✓)
+  optional data.speech.common.RequestMeta request_meta = 1;
+  data.speech.event.Type event = 2;
+}
+
+message Pong {
+  // Alway set response_meta as an "optional" field for the same reason as field
+  // Ping.request_meta
+  optional data.speech.common.ResponseMeta response_meta = 1;
+  data.speech.event.Type event = 2;
+}

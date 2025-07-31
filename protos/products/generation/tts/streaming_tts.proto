@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+import "common/rpcmeta.proto";
+
+package data.speech.tts;
+
+option go_package = "code.byted.org/data-speech/idls/kitex_gen/products/generation/tts";
+
+message TTSUser {
+  string uid = 1;
+  string did = 2;
+  string device_platform = 3;
+  string device_type = 4;
+  string version_code = 5;
+  string language = 6;
+}
+
+message AudioParams {
+  string format = 1;
+  int32 sample_rate = 2;
+  int32 channel = 3;
+  int32 speech_rate = 4;
+  int32 pitch_rate = 5;
+  int32 bit_rate = 6;
+  int32 volume = 7;
+  string lang = 8;
+  string emotion = 9;
+  string gender = 10;
+  bool enable_timestamp = 11;
+  int32 loudness_rate = 12;
+  optional float emotion_scale = 13;
+}
+
+message EngineParams {
+  string engine_context = 1;
+  string phoneme_size = 2;
+  bool enable_fast_text_seg = 3;
+  bool force_break = 4;
+  int32 break_by_prosody = 5;
+  bool enable_engine_debug_info = 6;
+  bool flush_sentence = 7;
+  string lab_version = 8;
+  bool enable_ipa_extraction = 9;
+  bool enable_naive_tn = 10;
+  bool enable_latex_tn = 11;
+  bool disable_newline_strategy = 12;
+  repeated string supported_languages = 13;
+  string context_language = 14;
+  repeated string context_texts = 15;
+  bool enable_recover_puncts = 16;
+  int32 eos_prosody = 17;
+  double prepend_silence_seconds = 18;
+  int32 max_paragraph_phoneme_size = 19;
+  repeated string paragraph_sub_sentences = 20;
+  int32 max_length_to_filter_parenthesis = 21;
+  bool enable_language_detector = 22;
+}
+
+message Texts {
+  repeated string texts = 1;
+}
+
+message TTSReqParams {
+  string text = 1;
+  Texts texts = 2;
+  string ssml = 3;
+  string speaker = 4;
+  AudioParams audio_params = 5;
+  EngineParams engine_params = 6;
+  bool enable_audio2bs = 7;
+  bool enable_text_seg = 8;
+  MixSpeaker mix_speaker = 9;
+
+  string additions = 100;
+  optional string model = 101;
+}
+
+message MixSpeaker {
+  repeated MixSpeakerItem speakers = 1;
+}
+
+message MixSpeakerItem {
+  string source_speaker = 1;
+  double mix_factor = 2;
+}
+
+message TTSRequest {
+  TTSUser user = 1;
+  // Similar to TTSResponse.event field.
+  int32 event = 2;
+  string namespace = 3;
+  optional common.RequestMeta request_meta = 4;
+
+  TTSReqParams req_params = 10;
+}
+
+message Word {
+  string word = 1;
+  float start_time = 2;
+  float end_time = 3;
+  optional float confidence = 4;
+}
+
+message Phoneme {
+  string phone = 1;
+  float start_time = 2;
+  float end_time = 3;
+  optional float confidence = 4;
+}
+
+message TTSResParams {
+  string text = 1;
+  optional int32 duration = 2;
+  repeated Word words = 3;
+  repeated Phoneme phonemes = 4;
+
+  optional string additions = 100;
+}
+
+message TTSResponse {
+  bytes data = 1;
+  // Refer to `common/event/events.proto` for an exhaustive event list.
+  // How to use (Take `Type.TTSSentenceStart` for example):
+  // ```
+  //   import (
+  //     "code.byted.org/data-speech/idls/common/event"
+  //     "code.byted.org/data-speech/idls/kitex_gen/products/generation/tts"
+  //   )
+  //   resp := new(tts.TTSResponse)
+  //   resp.Event = int32(event.Type_TTSSentenceStart)
+  // ```
+  // Read following for more explanation:
+  // https://bytedance.larkoffice.com/docx/FClcd29E0oDY4Xx1N2TcfXWSncb#ZNcrdyyFDocuyRxFCajcovI9nVb
+  int32 event = 2;
+  optional common.ResponseMeta response_meta = 3;
+
+  TTSResParams res_params = 10;
+}
+
+service TTSService {
+  rpc Synthesize(stream TTSRequest) returns (stream TTSResponse);
+}
