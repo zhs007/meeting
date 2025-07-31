@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/google/uuid"
+	"github.com/gordonklaus/portaudio"
 
 	"code.byted.org/data-speech/wsclientsdk/protogen/common/event"
 	"code.byted.org/data-speech/wsclientsdk/protogen/common/rpcmeta"
@@ -94,6 +95,22 @@ func translateV4(conf Config, audio string, n int) {
 		glog.Info("FinishSession request is sent.")
 	}()
 
+	portaudio.Initialize()
+	defer portaudio.Terminate()
+
+	outData := make([]byte, 3200)
+	stream, err := portaudio.OpenDefaultStream(0, 1, 48000, 3200, outData)
+	if err != nil {
+		glog.Errorf("PortAudio open stream error: %v", err)
+		return
+	}
+	defer stream.Close()
+	if err := stream.Start(); err != nil {
+		glog.Errorf("PortAudio start error: %v", err)
+		return
+	}
+	defer stream.Stop()
+
 	var recvAudio bytes.Buffer
 	var recvText strings.Builder
 	for {
@@ -117,8 +134,37 @@ func translateV4(conf Config, audio string, n int) {
 		glog.Infof("Receive message (session_id=%s, event=%s), seq:%d, text:%s, audio data length:%d",
 			resp.GetResponseMeta().GetSessionID(), resp.GetEvent(), resp.GetResponseMeta().GetSequence(), resp.GetText(), len(resp.GetData()))
 		glog.V(3).Infof("Receive message: %+v", resp)
-		recvAudio.Write(resp.GetData())
+		// 流式播放音频数据
+		if len(resp.GetData()) > 0 {
+			recvAudio.Write(resp.GetData())
+			if recvAudio.Len() >= 3200 {
+				_, err := recvAudio.Read(outData)
+				if err != nil {
+					glog.Errorf("Read audio data error: %v", err)
+
+					continue
+				}
+
+				if err := stream.Write(); err != nil {
+					glog.Errorf("PortAudio write error: %v", err)
+					return
+				}
+			}
+			// // playPCMStream(resp.GetData(), 48000)
+			// // 将 []byte 转为 []int16
+			// pcm16 := make([]int16, len(pcm)/2)
+			// for i := 0; i < len(pcm)/2; i++ {
+			// 	pcm16[i] = int16(pcm[2*i]) | int16(pcm[2*i+1])<<8
+			// }
+			// if err := stream.Write(pcm16); err != nil {
+			// 	glog.Errorf("PortAudio write error: %v", err)
+
+			// }
+
+		}
+
 		recvText.WriteString(resp.GetText())
+
 	}
 
 	if recvAudio.Len() > 0 {
