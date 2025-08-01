@@ -97,7 +97,7 @@ func translateV4(conf Config, audiofile string, n int) {
 	// }()
 
 	chanIn := make(chan []int16, 128)
-	_, out, err := audio.Init(16000, 1, 16, 80*time.Millisecond, chanIn)
+	_, out, err := audio.Init("MacBook Air麦克风", "BlackHole 2ch", 16000, 1, 16, 80*time.Millisecond, chanIn)
 	if err != nil {
 		glog.Exitf("Initialize audio: %v", err)
 	}

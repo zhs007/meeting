@@ -1,6 +1,8 @@
 package audio
 
 import (
+	"time"
+
 	"github.com/gordonklaus/portaudio"
 )
 
@@ -22,12 +24,20 @@ func (in *In) processAudio(inBuf []float32) {
 	in.chanIn <- pcmData
 }
 
-func NewIn(sampleRate int, channels int, chanIn chan []int16) (*In, error) {
+func NewIn(device *portaudio.DeviceInfo, sampleRate int, channels int, bitDepth int, duration time.Duration, chanIn chan []int16) (*In, error) {
+	framesPerBuffer := int(float64(sampleRate) * duration.Seconds())
+	// bytesPerSample := bitDepth / 8
+	// bytesPerBuffer := framesPerBuffer * channels * bytesPerSample
+
 	in := &In{
 		chanIn: chanIn,
 	}
-
-	stream, err := portaudio.OpenDefaultStream(channels, 0, float64(sampleRate), 0, in.processAudio)
+	stream, err := portaudio.OpenStream(portaudio.StreamParameters{
+		Input:           portaudio.StreamDeviceParameters{Device: device, Channels: channels},
+		SampleRate:      float64(sampleRate),
+		FramesPerBuffer: framesPerBuffer,
+	}, in.processAudio)
+	// stream, err := portaudio.OpenDefaultStream(channels, 0, float64(sampleRate), 0, in.processAudio)
 	if err != nil {
 		return nil, err
 	}

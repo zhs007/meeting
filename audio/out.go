@@ -67,7 +67,7 @@ func (o *Out) processAudio(out []float32) {
 	slog.Info("ReadInt16 ", "len", o.framesPerBuffer, "buffer_len", o.buffer.Len())
 }
 
-func NewOut(sampleRate int, channels int, bitDepth int, duration time.Duration) (*Out, error) {
+func NewOut(device *portaudio.DeviceInfo, sampleRate int, channels int, bitDepth int, duration time.Duration) (*Out, error) {
 	framesPerBuffer := int(float64(sampleRate) * duration.Seconds())
 	bytesPerSample := bitDepth / 8
 	bytesPerBuffer := framesPerBuffer * channels * bytesPerSample
@@ -79,7 +79,12 @@ func NewOut(sampleRate int, channels int, bitDepth int, duration time.Duration) 
 		framesPerBuffer: framesPerBuffer,
 	}
 
-	stream, err := portaudio.OpenDefaultStream(0, channels, float64(sampleRate), framesPerBuffer, out.processAudio)
+	stream, err := portaudio.OpenStream(portaudio.StreamParameters{
+		Output:          portaudio.StreamDeviceParameters{Device: device, Channels: channels},
+		SampleRate:      float64(sampleRate),
+		FramesPerBuffer: framesPerBuffer,
+	}, out.processAudio)
+	// stream, err := portaudio.OpenDefaultStream(0, channels, float64(sampleRate), framesPerBuffer, out.processAudio)
 	if err != nil {
 		return nil, err
 	}
