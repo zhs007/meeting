@@ -22,10 +22,10 @@ import (
 
 // translateV4 sends audio chunks to server and receives translated text.
 func translateV4(conf Config, audiofile string, n int) {
-	audioChunks, err := readAudioChunks(audiofile, 3200) // chunk size: 100ms
-	if err != nil {
-		glog.Exitf("Read audio chunks from file: %v", err)
-	}
+	// audioChunks, err := readAudioChunks(audiofile, 3200) // chunk size: 100ms
+	// if err != nil {
+	// 	glog.Exitf("Read audio chunks from file: %v", err)
+	// }
 
 	conn, err := dial(conf, uuid.New().String())
 	if err != nil {
@@ -65,43 +65,64 @@ func translateV4(conf Config, audiofile string, n int) {
 	}
 	glog.Infof("Session (ID=%s) started.", sessionId)
 
-	go func() {
-		t := time.NewTicker(100 * time.Millisecond)
-		defer t.Stop()
+	// go func() {
+	// 	t := time.NewTicker(100 * time.Millisecond)
+	// 	defer t.Stop()
 
-		for _, chunk := range audioChunks {
-			glog.Infof("Sending chunk: %d", len(chunk))
+	// 	for _, chunk := range audioChunks {
+	// 		glog.Infof("Sending chunk: %d", len(chunk))
+	// 		if err := sendV4Request(conn, &ast.TranslateRequest{
+	// 			RequestMeta: &rpcmeta.RequestMeta{
+	// 				SessionID: sessionId,
+	// 			},
+	// 			Event: event.Type_TaskRequest,
+	// 			SourceAudio: &base.Audio{
+	// 				BinaryData: chunk,
+	// 			},
+	// 		}); err != nil {
+	// 			glog.Exitf("Send audio chunk: %v", err)
+	// 		}
+	// 		<-t.C
+	// 	}
+
+	// 	if err := sendV4Request(conn, &ast.TranslateRequest{
+	// 		RequestMeta: &rpcmeta.RequestMeta{
+	// 			SessionID: sessionId,
+	// 		},
+	// 		Event: event.Type_FinishSession,
+	// 	}); err != nil {
+	// 		glog.Exitf("Finish session: %v", err)
+	// 	}
+	// 	glog.Info("FinishSession request is sent.")
+	// }()
+
+	chanIn := make(chan []int16, 128)
+	_, out, err := audio.Init(16000, 1, 16, 80*time.Millisecond, chanIn)
+	if err != nil {
+		glog.Exitf("Initialize audio: %v", err)
+	}
+	defer audio.Terminate()
+
+	go func() {
+		for {
+			pcmData := <-chanIn
+
+			glog.Infof("Sending chunk: %d", len(pcmData))
 			if err := sendV4Request(conn, &ast.TranslateRequest{
 				RequestMeta: &rpcmeta.RequestMeta{
 					SessionID: sessionId,
 				},
 				Event: event.Type_TaskRequest,
 				SourceAudio: &base.Audio{
-					BinaryData: chunk,
+					BinaryData: audio.Int16ToBytes(pcmData),
 				},
 			}); err != nil {
 				glog.Exitf("Send audio chunk: %v", err)
 			}
-			<-t.C
+			// <-t.C
 		}
-
-		if err := sendV4Request(conn, &ast.TranslateRequest{
-			RequestMeta: &rpcmeta.RequestMeta{
-				SessionID: sessionId,
-			},
-			Event: event.Type_FinishSession,
-		}); err != nil {
-			glog.Exitf("Finish session: %v", err)
-		}
-		glog.Info("FinishSession request is sent.")
 	}()
 
-	out, err := audio.Init()
-	if err != nil {
-		glog.Exitf("Initialize audio: %v", err)
-	}
-
-	defer audio.Terminate()
 	// portaudio.Initialize()
 	// defer portaudio.Terminate()
 

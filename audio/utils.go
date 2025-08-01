@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-func BytesToInt16(data []byte) []int16 {
+func BytesToInt16s(data []byte) []int16 {
 	if len(data)%2 != 0 {
 		data = append(data, 0)
 	}
@@ -17,6 +17,16 @@ func BytesToInt16(data []byte) []int16 {
 	}
 
 	return ints
+}
+
+func Int16ToBytes(ints []int16) []byte {
+	data := make([]byte, len(ints)*2)
+
+	for i, v := range ints {
+		binary.LittleEndian.PutUint16(data[i*2:i*2+2], uint16(v))
+	}
+
+	return data
 }
 
 // ReadInt16 从一个 io.Reader 中读取 int16
