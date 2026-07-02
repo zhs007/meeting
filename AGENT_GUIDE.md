@@ -4,23 +4,43 @@
 
 ## 1. 基础信息
 - 项目名称：meeting
-- 主要语言：Go
-- 业务领域：在线会议的同声传译
+- 主要语言：Python 原型 + legacy Go
+- 业务领域：macOS 在线会议单向实时同声传译
 
 ## 2. 项目描述
 
-通过麦克风获取本地说话者的中文音频数据，发送给 api 服务器（websocket），api 服务器会发回英文音频数据，然后将英文数据发给一个虚拟麦克风，在线会议 app 需要读取虚拟麦克风数据。
-在线会议 app 将别人的会话数据发给一个虚拟扬声器，然后 meeting 项目会从这个虚拟扬声器的音频数据通过另外websocket 发送给 api 服务器，然后将服务器返回的中文音频数据传给真实的扬声器。
+当前主要方向是 Python + Gemini Live Translation 单向实时会议翻译原型：
 
-虚拟扬声器和虚拟麦克风以及在线会议 app 都不需要本项目处理。
+```text
+AirPods 4 麦克风中文语音
+  -> meeting Python app
+  -> Gemini Live Translation
+  -> 英文语音 PCM
+  -> BlackHole 2ch 输出设备
+  -> 会议 app 的麦克风输入
+```
 
-考虑到后期项目配置和会议文本记录的需求，本项目可能还会有一个简单的配置页面，用来配置麦克风和扬声器的选择，和 会议文本的列表显示（有可能需要 SSE 方式实现打字机效果）。
+本项目不接管会议 app 的扬声器输出。会议 app 的麦克风应选择 BlackHole 2ch，扬声器应由用户自行选择 AirPods 4。
+
+仓库中 legacy Go/豆包 AST 代码保留为历史参考和音频链路参考，不作为 Python 原型的架构约束。
 
 ## 3. 注意事项
-- 由于开发环境限制，不要自动执行任何 go 相关的命令行操作，譬如 go mod / go build 等，告诉开发者要做什么，开发者来执行这些指令。
+- Python 原型位于 `src/meeting_translator/`。
+- Python 验证命令：
+  - `python -m pip install -r requirements.txt`
+  - `python -m pip install -e .`
+  - `python -m pytest`
+  - `python -m ruff check .`
+  - `python -m meeting_translator devices`
+  - `python -m meeting_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --target-language en`
+- 设备名不能隐式兜底到系统默认设备；缺设备、设备找不到、采样率/声道/dtype 不支持都必须显式失败。
+- 不得提交 `.env`、真实 API key、会议音频、PCM/WAV 文件或 `logs/` 下的会议日志。
+- 依赖下载失败时，可以临时使用用户指定代理 `http://127.0.0.1:1087` / `https://127.0.0.1:1087` 重试安装命令；不得把代理写入源码、配置文件或测试。
+- legacy Go 任务仍需谨慎执行 Go 命令；如仅处理 Python 原型，可按上述 Python 验证命令执行。
 
 ## 4. 参考规范
 - 详细编码规范见 rule.md。
+- Python/Python 原型协作规则见 AGENTS.md。
 - 其他协作和提交要求见 CONTRIBUTING.md（如有）。
 
 ---
