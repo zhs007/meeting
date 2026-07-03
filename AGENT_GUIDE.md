@@ -9,12 +9,19 @@
 
 ## 2. 项目描述
 
-当前主要方向是 Python + Gemini Live Translation 单向实时会议翻译原型：
+当前主要方向是 Python 单向实时会议翻译原型。Gemini 和 OpenAI 两条原型独立并存：
 
 ```text
 AirPods 4 麦克风中文语音
   -> meeting Python app
   -> Gemini Live Translation
+  -> 英文语音 PCM
+  -> BlackHole 2ch 输出设备
+  -> 会议 app 的麦克风输入
+
+AirPods 4 麦克风中文语音
+  -> meeting OpenAI Python app
+  -> OpenAI Realtime Translation
   -> 英文语音 PCM
   -> BlackHole 2ch 输出设备
   -> 会议 app 的麦克风输入
@@ -25,7 +32,8 @@ AirPods 4 麦克风中文语音
 仓库中 legacy Go/豆包 AST 代码保留为历史参考和音频链路参考，不作为 Python 原型的架构约束。
 
 ## 3. 注意事项
-- Python 原型位于 `src/meeting_translator/`。
+- Gemini Python 原型位于 `src/meeting_translator/`。
+- OpenAI Python 原型位于 `src/meeting_openai_translator/`。
 - Python 验证命令：
   - `python -m pip install -r requirements.txt`
   - `python -m pip install -e .`
@@ -33,6 +41,8 @@ AirPods 4 麦克风中文语音
   - `python -m ruff check .`
   - `python -m meeting_translator devices`
   - `python -m meeting_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --target-language en`
+  - `python -m meeting_openai_translator devices`
+  - `python -m meeting_openai_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --target-language en`
 - 设备名不能隐式兜底到系统默认设备；缺设备、设备找不到、采样率/声道/dtype 不支持都必须显式失败。
 - 不得提交 `.env`、真实 API key、会议音频、PCM/WAV 文件或 `logs/` 下的会议日志。
 - 依赖下载失败时，可以临时使用用户指定代理 `http://127.0.0.1:1087` / `https://127.0.0.1:1087` 重试安装命令；不得把代理写入源码、配置文件或测试。

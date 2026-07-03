@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "meeting-translator"
 version = "0.1.0"
-description = "macOS one-way real-time meeting translation prototype using Gemini Live Translation"
+description = "macOS one-way real-time meeting translation prototypes using Gemini and OpenAI"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2.0.0,<3",
     "python-dotenv>=1.0.1,<2",
     "sounddevice>=0.5.0,<0.6",
+    "websockets>=14.0,<16",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,7 @@ dev = [
 
 [project.scripts]
 meeting-translator = "meeting_translator.cli:main"
+meeting-openai-translator = "meeting_openai_translator.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

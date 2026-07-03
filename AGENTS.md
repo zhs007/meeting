@@ -1,16 +1,18 @@
 # AGENTS.md
 
-本仓库包含 legacy Go 实现和 Python 实时翻译原型。当前主要任务方向是 macOS 单向实时会议翻译：
+本仓库包含 legacy Go 实现和 Python 实时翻译原型。当前主要任务方向是 macOS 单向实时会议翻译，Gemini 和 OpenAI 作为两条独立 Python 原型并存：
 
 ```text
 AirPods 4 麦克风 -> Python app -> Gemini Live Translation -> BlackHole 2ch -> 会议 app 麦克风
+AirPods 4 麦克风 -> Python app -> OpenAI Realtime Translation -> BlackHole 2ch -> 会议 app 麦克风
 ```
 
 ## 技术栈边界
 
-- Python 原型位于 `src/meeting_translator/`，使用 `google-genai` 和 `sounddevice`。
+- Gemini Python 原型位于 `src/meeting_translator/`，使用 `google-genai` 和 `sounddevice`。
+- OpenAI Python 原型位于 `src/meeting_openai_translator/`，使用 `websockets` 和 `sounddevice`。
 - legacy Go/豆包代码保留为参考，不要为了 Python 任务删除或重写 Go 文件。
-- 本任务只实现 Gemini Live Translation provider，不引入 OpenAI provider 或通用 provider 抽象。
+- Gemini 和 OpenAI 保持独立入口和独立音频参数；不要引入不必要的通用 provider 抽象。
 - 不接管会议 app 的扬声器输出；会议 app 扬声器应由用户设置为 AirPods 4。
 
 ## Python 验证命令
@@ -26,6 +28,11 @@ python -m meeting_translator check \
   --input-device "AirPods 4" \
   --output-device "BlackHole 2ch" \
   --target-language en
+python -m meeting_openai_translator devices
+python -m meeting_openai_translator check \
+  --input-device "AirPods 4" \
+  --output-device "BlackHole 2ch" \
+  --target-language en
 git diff --check
 ```
 
@@ -33,7 +40,7 @@ git diff --check
 
 ## 失败策略
 
-- 缺少 `GEMINI_API_KEY` 必须显式失败，不能打印 key 值。
+- 缺少 `GEMINI_API_KEY` 或 `OPENAI_API_KEY` 必须显式失败，不能打印 key 值。
 - 缺少设备名、设备找不到、采样率/声道/dtype 不支持必须显式失败。
 - 不允许静默选择默认音频设备。
 - 不允许静默降级采样率或声道。
@@ -44,7 +51,7 @@ git diff --check
 不得提交以下内容：
 
 - `.env`
-- 真实 Gemini API key 或其他 API key
+- 真实 Gemini API key、OpenAI API key 或其他 API key
 - 会议音频、PCM、WAV
 - `logs/` 下的会议字幕日志或运行摘要
 
