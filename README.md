@@ -71,6 +71,14 @@ MEETING_INPUT_DEVICE=AirPods 4
 MEETING_OUTPUT_DEVICE=BlackHole 2ch
 MEETING_TARGET_LANGUAGE=en
 MEETING_ECHO_TARGET_LANGUAGE=false
+MEETING_INPUT_QUEUE_CHUNKS=8
+MEETING_OUTPUT_QUEUE_CHUNKS=8
+MEETING_OUTPUT_THREAD_QUEUE_CHUNKS=8
+MEETING_MAX_PLAYBACK_BUFFER_MS=800
+MEETING_METRICS_INTERVAL_SEC=10
+MEETING_AUTO_RECONNECT=true
+MEETING_MAX_RECONNECTS=0
+MEETING_DEBUG_EVENTS=false
 ```
 
 配置优先级：
@@ -80,6 +88,8 @@ MEETING_ECHO_TARGET_LANGUAGE=false
 ```
 
 设备名没有隐式默认值。未通过命令行、环境变量或 `.env` 指定设备时，`check` 和 `run` 会失败并提示先列设备。
+
+Gemini 原型默认使用低延迟本地队列：输入队列 8 个 100ms chunk，Gemini 输出 asyncio 队列 8 个 chunk，输出线程队列 8 个 chunk，播放缓冲最多 800ms。旧音频只会按明确低延迟策略丢弃，并在运行摘要中计数；输入队列溢出会显式停止本次运行，不会静默堆积多秒延迟。启动和 GoAway 重连期间会等 Gemini session ready 后再把麦克风音频放入输入队列，断开窗口里的输入 chunk 会作为 `input_dropped_while_disconnected` 计数。
 
 ### 列设备
 
@@ -105,6 +115,7 @@ python -m meeting_translator check \
 - 输出设备可按 24kHz mono int16 打开。
 - Gemini 配置可构造为 Live Translation + 目标语言。
 - 100ms 输入 chunk 为 3200 bytes。
+- Gemini 低延迟队列、metrics、自动重连参数可解析。
 
 ### 运行
 
@@ -112,12 +123,18 @@ python -m meeting_translator check \
 GEMINI_API_KEY=your_key_here python -m meeting_translator run \
   --input-device "AirPods 4" \
   --output-device "BlackHole 2ch" \
-  --target-language en
+  --target-language en \
+  --input-queue-chunks 8 \
+  --output-queue-chunks 8 \
+  --output-thread-queue-chunks 8 \
+  --max-playback-buffer-ms 800 \
+  --metrics-interval-sec 10 \
+  --auto-reconnect
 ```
 
-运行时会打印 input transcript 和 output transcript，并把本次摘要写入 `logs/`。日志目录默认不入库，日志不得包含 API key。
+运行时会打印 input transcript、output transcript 和周期 metrics，例如本地输入/输出队列深度、播放缓冲时长、输出丢弃数、重连数、未知事件数。5 秒体感延迟不一定是网络问题，先看 metrics 中本地队列是否积压到多秒。
 
-Ctrl+C 会关闭输入流、输出流和 Gemini session，并输出本次运行摘要。
+Gemini Live session 约 10 分钟可能收到 GoAway。默认 `MEETING_AUTO_RECONNECT=true` 会在 GoAway 前主动关闭当前 session、清理旧输入/输出音频并创建新 session；如果关闭自动重连，GoAway 会作为正常会话结束记录到 summary。Ctrl+C 会关闭输入流、输出流和 Gemini session，并输出本次运行摘要。
 
 ## Python + OpenAI 单向实时翻译
 

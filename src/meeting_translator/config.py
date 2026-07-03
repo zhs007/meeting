@@ -10,6 +10,14 @@ from dotenv import load_dotenv
 
 DEFAULT_TARGET_LANGUAGE = "en"
 DEFAULT_ECHO_TARGET_LANGUAGE = False
+DEFAULT_INPUT_QUEUE_CHUNKS = 8
+DEFAULT_OUTPUT_QUEUE_CHUNKS = 8
+DEFAULT_OUTPUT_THREAD_QUEUE_CHUNKS = 8
+DEFAULT_MAX_PLAYBACK_BUFFER_MS = 800
+DEFAULT_METRICS_INTERVAL_SEC = 10.0
+DEFAULT_AUTO_RECONNECT = True
+DEFAULT_MAX_RECONNECTS = 0
+DEFAULT_DEBUG_EVENTS = False
 
 
 class ConfigError(ValueError):
@@ -23,6 +31,14 @@ class AppConfig:
     output_device: str | None
     target_language: str
     echo_target_language: bool
+    input_queue_chunks: int
+    output_queue_chunks: int
+    output_thread_queue_chunks: int
+    max_playback_buffer_ms: int
+    metrics_interval_sec: float
+    auto_reconnect: bool
+    max_reconnects: int
+    debug_events: bool
 
 
 def _blank_to_none(value: str | None) -> str | None:
@@ -60,6 +76,36 @@ def parse_bool(value: str, name: str) -> bool:
     raise ConfigError(f"{name} must be a boolean value, got {value!r}")
 
 
+def _parse_positive_int(value: int | str, name: str) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a positive integer, got {value!r}") from exc
+    if parsed <= 0:
+        raise ConfigError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
+
+
+def _parse_non_negative_int(value: int | str, name: str) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a non-negative integer, got {value!r}") from exc
+    if parsed < 0:
+        raise ConfigError(f"{name} must be a non-negative integer, got {value!r}")
+    return parsed
+
+
+def _parse_non_negative_float(value: float | str, name: str) -> float:
+    try:
+        parsed = float(str(value).strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a non-negative number, got {value!r}") from exc
+    if parsed < 0:
+        raise ConfigError(f"{name} must be a non-negative number, got {value!r}")
+    return parsed
+
+
 def _choose_bool(
     cli_value: bool | None,
     env: Mapping[str, str],
@@ -74,12 +120,62 @@ def _choose_bool(
     return default
 
 
+def _choose_positive_int(
+    cli_value: int | str | None,
+    env: Mapping[str, str],
+    env_name: str,
+    default: int,
+) -> int:
+    if cli_value is not None:
+        return _parse_positive_int(cli_value, env_name)
+    env_config = _env_value(env, env_name)
+    if env_config is not None:
+        return _parse_positive_int(env_config, env_name)
+    return default
+
+
+def _choose_non_negative_int(
+    cli_value: int | str | None,
+    env: Mapping[str, str],
+    env_name: str,
+    default: int,
+) -> int:
+    if cli_value is not None:
+        return _parse_non_negative_int(cli_value, env_name)
+    env_config = _env_value(env, env_name)
+    if env_config is not None:
+        return _parse_non_negative_int(env_config, env_name)
+    return default
+
+
+def _choose_non_negative_float(
+    cli_value: float | str | None,
+    env: Mapping[str, str],
+    env_name: str,
+    default: float,
+) -> float:
+    if cli_value is not None:
+        return _parse_non_negative_float(cli_value, env_name)
+    env_config = _env_value(env, env_name)
+    if env_config is not None:
+        return _parse_non_negative_float(env_config, env_name)
+    return default
+
+
 def load_config(
     *,
     input_device: str | None = None,
     output_device: str | None = None,
     target_language: str | None = None,
     echo_target_language: bool | None = None,
+    input_queue_chunks: int | str | None = None,
+    output_queue_chunks: int | str | None = None,
+    output_thread_queue_chunks: int | str | None = None,
+    max_playback_buffer_ms: int | str | None = None,
+    metrics_interval_sec: float | str | None = None,
+    auto_reconnect: bool | None = None,
+    max_reconnects: int | str | None = None,
+    debug_events: bool | None = None,
     env: Mapping[str, str] | None = None,
     dotenv_path: str | Path | None = ".env",
 ) -> AppConfig:
@@ -104,6 +200,54 @@ def load_config(
             env,
             "MEETING_ECHO_TARGET_LANGUAGE",
             DEFAULT_ECHO_TARGET_LANGUAGE,
+        ),
+        input_queue_chunks=_choose_positive_int(
+            input_queue_chunks,
+            env,
+            "MEETING_INPUT_QUEUE_CHUNKS",
+            DEFAULT_INPUT_QUEUE_CHUNKS,
+        ),
+        output_queue_chunks=_choose_positive_int(
+            output_queue_chunks,
+            env,
+            "MEETING_OUTPUT_QUEUE_CHUNKS",
+            DEFAULT_OUTPUT_QUEUE_CHUNKS,
+        ),
+        output_thread_queue_chunks=_choose_positive_int(
+            output_thread_queue_chunks,
+            env,
+            "MEETING_OUTPUT_THREAD_QUEUE_CHUNKS",
+            DEFAULT_OUTPUT_THREAD_QUEUE_CHUNKS,
+        ),
+        max_playback_buffer_ms=_choose_positive_int(
+            max_playback_buffer_ms,
+            env,
+            "MEETING_MAX_PLAYBACK_BUFFER_MS",
+            DEFAULT_MAX_PLAYBACK_BUFFER_MS,
+        ),
+        metrics_interval_sec=_choose_non_negative_float(
+            metrics_interval_sec,
+            env,
+            "MEETING_METRICS_INTERVAL_SEC",
+            DEFAULT_METRICS_INTERVAL_SEC,
+        ),
+        auto_reconnect=_choose_bool(
+            auto_reconnect,
+            env,
+            "MEETING_AUTO_RECONNECT",
+            DEFAULT_AUTO_RECONNECT,
+        ),
+        max_reconnects=_choose_non_negative_int(
+            max_reconnects,
+            env,
+            "MEETING_MAX_RECONNECTS",
+            DEFAULT_MAX_RECONNECTS,
+        ),
+        debug_events=_choose_bool(
+            debug_events,
+            env,
+            "MEETING_DEBUG_EVENTS",
+            DEFAULT_DEBUG_EVENTS,
         ),
     )
 

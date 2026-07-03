@@ -27,7 +27,13 @@ python -m meeting_translator devices
 python -m meeting_translator check \
   --input-device "AirPods 4" \
   --output-device "BlackHole 2ch" \
-  --target-language en
+  --target-language en \
+  --input-queue-chunks 8 \
+  --output-queue-chunks 8 \
+  --output-thread-queue-chunks 8 \
+  --max-playback-buffer-ms 800 \
+  --metrics-interval-sec 10 \
+  --auto-reconnect
 python -m meeting_openai_translator devices
 python -m meeting_openai_translator check \
   --input-device "AirPods 4" \
@@ -44,6 +50,8 @@ git diff --check
 - 缺少设备名、设备找不到、采样率/声道/dtype 不支持必须显式失败。
 - 不允许静默选择默认音频设备。
 - 不允许静默降级采样率或声道。
+- Gemini 低延迟输出丢弃必须有明确策略和计数，不能伪装为正常播放成功。
+- Gemini 输入队列溢出必须显式停止或报错，不能静默吞掉并继续运行。
 - 不要为了测试通过加入生产代码不需要的隐藏 fallback。
 
 ## 安全规则

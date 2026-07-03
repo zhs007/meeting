@@ -17,12 +17,62 @@ from meeting_translator.pcm import (
 )
 
 
+def output_bytes_to_ms(byte_count: int) -> int:
+    bytes_per_second = OUTPUT_SAMPLE_RATE * OUTPUT_CHANNELS * PCM16_BYTES_PER_SAMPLE
+    return round(byte_count * 1000 / bytes_per_second)
+
+
 @dataclass
 class AudioRuntimeStats:
+    input_chunks_captured: int = 0
+    input_chunks_queued: int = 0
+    input_dropped_while_disconnected: int = 0
+    input_stale_cleared_chunks: int = 0
+    input_stale_cleared_bytes: int = 0
     input_overflows: int = 0
+    input_overflow_error: str | None = None
+    input_max_queue_depth: int = 0
+    output_chunks_enqueued_to_thread: int = 0
+    output_audio_callbacks_with_audio: int = 0
+    output_audio_bytes_played: int = 0
     output_silence_callbacks: int = 0
     output_dropped_chunks: int = 0
+    output_dropped_bytes: int = 0
+    output_stale_cleared_chunks: int = 0
+    output_stale_cleared_bytes: int = 0
+    output_max_async_queue_depth: int = 0
+    output_max_thread_queue_depth: int = 0
+    output_max_playback_buffer_ms: int = 0
     callback_errors: list[str] = field(default_factory=list)
+
+    def note_input_queue_depth(self, depth: int) -> None:
+        self.input_max_queue_depth = max(self.input_max_queue_depth, depth)
+
+    def record_input_drop_while_disconnected(self, chunk: bytes) -> None:
+        self.input_dropped_while_disconnected += 1
+
+    def record_input_stale_drop(self, chunk: bytes) -> None:
+        self.input_stale_cleared_chunks += 1
+        self.input_stale_cleared_bytes += len(chunk)
+
+    def note_output_async_queue_depth(self, depth: int) -> None:
+        self.output_max_async_queue_depth = max(self.output_max_async_queue_depth, depth)
+
+    def note_output_thread_queue_depth(self, depth: int) -> None:
+        self.output_max_thread_queue_depth = max(self.output_max_thread_queue_depth, depth)
+
+    def note_playback_buffer_bytes(self, byte_count: int) -> None:
+        self.output_max_playback_buffer_ms = max(
+            self.output_max_playback_buffer_ms,
+            output_bytes_to_ms(byte_count),
+        )
+
+    def record_output_drop(self, chunk: bytes, *, stale: bool = False) -> None:
+        self.output_dropped_chunks += 1
+        self.output_dropped_bytes += len(chunk)
+        if stale:
+            self.output_stale_cleared_chunks += 1
+            self.output_stale_cleared_bytes += len(chunk)
 
 
 class RawAudioInput:
@@ -33,12 +83,16 @@ class RawAudioInput:
         output_queue: asyncio.Queue[bytes],
         loop: asyncio.AbstractEventLoop,
         stats: AudioRuntimeStats,
+        overflow_event: asyncio.Event | None = None,
+        capture_enabled_event: asyncio.Event | None = None,
     ) -> None:
         import sounddevice as sd
 
         self._queue = output_queue
         self._loop = loop
         self._stats = stats
+        self._overflow_event = overflow_event
+        self._capture_enabled_event = capture_enabled_event
         self._stream = sd.RawInputStream(
             device=device_index,
             samplerate=INPUT_SAMPLE_RATE,
@@ -52,12 +106,27 @@ class RawAudioInput:
         if status:
             self._stats.callback_errors.append(f"input callback status: {status}")
         chunk = bytes(indata)
+        self._stats.input_chunks_captured += 1
 
         def offer() -> None:
+            if (
+                self._capture_enabled_event is not None
+                and not self._capture_enabled_event.is_set()
+            ):
+                self._stats.record_input_drop_while_disconnected(chunk)
+                return
             try:
                 self._queue.put_nowait(chunk)
+                self._stats.input_chunks_queued += 1
+                self._stats.note_input_queue_depth(self._queue.qsize())
             except asyncio.QueueFull:
                 self._stats.input_overflows += 1
+                self._stats.input_overflow_error = (
+                    f"input audio queue overflowed at maxsize={self._queue.maxsize}; "
+                    "Gemini sender is not keeping up with capture."
+                )
+                if self._overflow_event is not None:
+                    self._overflow_event.set()
 
         self._loop.call_soon_threadsafe(offer)
 
@@ -78,13 +147,21 @@ class RawAudioOutput:
         device_index: int,
         input_queue: asyncio.Queue[bytes],
         stats: AudioRuntimeStats,
-        thread_queue_size: int = 50,
+        thread_queue_size: int,
+        max_playback_buffer_ms: int,
     ) -> None:
         import sounddevice as sd
 
         self._async_queue = input_queue
         self._thread_queue: queue.Queue[bytes] = queue.Queue(maxsize=thread_queue_size)
         self._playback_buffer = bytearray()
+        self._max_playback_buffer_bytes = (
+            OUTPUT_SAMPLE_RATE
+            * OUTPUT_CHANNELS
+            * PCM16_BYTES_PER_SAMPLE
+            * max_playback_buffer_ms
+            // 1000
+        )
         self._stats = stats
         self._closed = asyncio.Event()
         self._pump_task: asyncio.Task[None] | None = None
@@ -97,6 +174,48 @@ class RawAudioOutput:
             callback=self._callback,
         )
 
+    def _trim_playback_buffer_for_latency(self) -> None:
+        if len(self._playback_buffer) <= self._max_playback_buffer_bytes:
+            self._stats.note_playback_buffer_bytes(len(self._playback_buffer))
+            return
+        drop_bytes = len(self._playback_buffer) - self._max_playback_buffer_bytes
+        dropped = bytes(self._playback_buffer[:drop_bytes])
+        del self._playback_buffer[:drop_bytes]
+        self._stats.record_output_drop(dropped)
+        self._stats.note_playback_buffer_bytes(len(self._playback_buffer) + drop_bytes)
+
+    def _enqueue_thread_chunk(self, chunk: bytes) -> None:
+        try:
+            self._thread_queue.put_nowait(chunk)
+        except queue.Full:
+            try:
+                dropped = self._thread_queue.get_nowait()
+            except queue.Empty:
+                dropped = b""
+            if dropped:
+                self._stats.record_output_drop(dropped)
+            self._thread_queue.put_nowait(chunk)
+        self._stats.output_chunks_enqueued_to_thread += 1
+        self._stats.note_output_thread_queue_depth(self._thread_queue.qsize())
+
+    def clear_pending(self) -> None:
+        while True:
+            try:
+                dropped = self._thread_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._stats.record_output_drop(dropped, stale=True)
+        if self._playback_buffer:
+            dropped = bytes(self._playback_buffer)
+            self._playback_buffer.clear()
+            self._stats.record_output_drop(dropped, stale=True)
+
+    def thread_queue_depth(self) -> int:
+        return self._thread_queue.qsize()
+
+    def playback_buffer_ms(self) -> int:
+        return output_bytes_to_ms(len(self._playback_buffer))
+
     def _callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
         if status:
             self._stats.callback_errors.append(f"output callback status: {status}")
@@ -104,18 +223,25 @@ class RawAudioOutput:
         while len(self._playback_buffer) < expected:
             try:
                 self._playback_buffer.extend(self._thread_queue.get_nowait())
+                self._stats.note_output_thread_queue_depth(self._thread_queue.qsize())
+                self._stats.note_playback_buffer_bytes(len(self._playback_buffer))
             except queue.Empty:
                 break
+        self._trim_playback_buffer_for_latency()
 
         if len(self._playback_buffer) >= expected:
             outdata[:] = self._playback_buffer[:expected]
             del self._playback_buffer[:expected]
+            self._stats.output_audio_callbacks_with_audio += 1
+            self._stats.output_audio_bytes_played += expected
             return
 
         available = bytes(self._playback_buffer)
         self._playback_buffer.clear()
         if available:
             outdata[:] = available + (b"\x00" * (expected - len(available)))
+            self._stats.output_audio_callbacks_with_audio += 1
+            self._stats.output_audio_bytes_played += len(available)
         else:
             outdata[:] = b"\x00" * expected
             self._stats.output_silence_callbacks += 1
@@ -123,10 +249,7 @@ class RawAudioOutput:
     async def _pump(self) -> None:
         while not self._closed.is_set():
             chunk = await self._async_queue.get()
-            try:
-                self._thread_queue.put_nowait(chunk)
-            except queue.Full:
-                self._stats.output_dropped_chunks += 1
+            self._enqueue_thread_chunk(chunk)
 
     def start(self) -> None:
         self._stream.start()

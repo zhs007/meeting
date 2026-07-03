@@ -40,10 +40,11 @@ AirPods 4 麦克风中文语音
   - `python -m pytest`
   - `python -m ruff check .`
   - `python -m meeting_translator devices`
-  - `python -m meeting_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --target-language en`
+  - `python -m meeting_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --target-language en --input-queue-chunks 8 --output-queue-chunks 8 --output-thread-queue-chunks 8 --max-playback-buffer-ms 800 --metrics-interval-sec 10 --auto-reconnect`
   - `python -m meeting_openai_translator devices`
   - `python -m meeting_openai_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --target-language en`
 - 设备名不能隐式兜底到系统默认设备；缺设备、设备找不到、采样率/声道/dtype 不支持都必须显式失败。
+- Gemini 低延迟输出丢弃必须可计数；输入队列溢出必须显式停止或报错，不能隐藏成正常运行。
 - 不得提交 `.env`、真实 API key、会议音频、PCM/WAV 文件或 `logs/` 下的会议日志。
 - 依赖下载失败时，可以临时使用用户指定代理 `http://127.0.0.1:1087` / `https://127.0.0.1:1087` 重试安装命令；不得把代理写入源码、配置文件或测试。
 - legacy Go 任务仍需谨慎执行 Go 命令；如仅处理 Python 原型，可按上述 Python 验证命令执行。

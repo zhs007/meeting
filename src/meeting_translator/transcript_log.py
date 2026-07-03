@@ -26,6 +26,7 @@ class RunSummary:
     input_transcript_segments: int = 0
     output_transcript_segments: int = 0
     error_status: str | None = None
+    metrics: dict[str, object] | None = None
 
 
 class TranscriptLogger:
@@ -65,8 +66,14 @@ class TranscriptLogger:
     def output_audio(self, byte_count: int) -> None:
         self.summary.received_audio_bytes += byte_count
 
-    def close(self, *, error_status: str | None = None) -> RunSummary:
+    def close(
+        self,
+        *,
+        error_status: str | None = None,
+        metrics: dict[str, object] | None = None,
+    ) -> RunSummary:
         self.summary.ended_at = utc_now().isoformat()
         self.summary.error_status = error_status
+        self.summary.metrics = metrics
         self._write({"type": "summary", "summary": asdict(self.summary)})
         return self.summary

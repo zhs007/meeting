@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 
 from meeting_translator.gemini_live_translate import (
+    GeminiEvent,
+    GeminiRuntimeStats,
     MODEL_NAME,
     apply_events,
     build_live_config,
@@ -65,13 +67,34 @@ def test_unknown_message_shape_is_reported_as_unsupported() -> None:
 def test_known_top_level_control_message_is_quiet() -> None:
     assert extract_gemini_events({"usageMetadata": {"totalTokenCount": 1}}) == []
     assert extract_gemini_events({"setupComplete": {}}) == []
+    assert extract_gemini_events({"sessionResumptionUpdate": {"newHandle": "abc"}}) == []
+    assert extract_gemini_events({"voiceActivity": {"activity": "START"}}) == []
+    assert extract_gemini_events({"voiceActivityDetectionSignal": {"signal": "END"}}) == []
 
 
 def test_known_server_content_control_message_is_quiet() -> None:
     assert extract_gemini_events({"serverContent": {"turnComplete": True}}) == []
     assert extract_gemini_events({"serverContent": {"generationComplete": True}}) == []
+    assert extract_gemini_events({"serverContent": {"waitingForInput": True}}) == []
     assert extract_gemini_events({"serverContent": {"inputTranscription": {"finished": True}}}) == []
     assert extract_gemini_events({"serverContent": {"outputTranscription": {"finished": True}}}) == []
+
+
+def test_unknown_event_is_counted_without_default_stdout(capsys) -> None:
+    stats = GeminiRuntimeStats()
+    queue: asyncio.Queue[bytes] = asyncio.Queue()
+
+    asyncio.run(
+        apply_events(
+            [GeminiEvent(type="unsupported", detail="unrecognized Gemini response shape")],
+            output_audio_queue=queue,
+            gemini_stats=stats,
+        )
+    )
+
+    assert "Unsupported Gemini event" not in capsys.readouterr().out
+    assert stats.unsupported_event_count == 1
+    assert stats.first_unsupported_event == "unrecognized Gemini response shape"
 
 
 def test_go_away_time_left_can_parse() -> None:

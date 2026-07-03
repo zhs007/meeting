@@ -4,8 +4,9 @@ import asyncio
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterator, Literal
+from typing import Any, AsyncContextManager, Callable, Iterator, Literal
 
+from meeting_translator.audio_io import AudioRuntimeStats
 from meeting_translator.pcm import INPUT_MIME_TYPE, PCMError, pcm16_from_base64, validate_input_chunk
 from meeting_translator.transcript_log import TranscriptLogger
 
@@ -13,6 +14,7 @@ from meeting_translator.transcript_log import TranscriptLogger
 MODEL_NAME = "gemini-3.5-live-translate-preview"
 
 EventType = Literal["input_transcript", "output_transcript", "audio", "unsupported"]
+SessionEndReason = Literal["shutdown", "goaway", "ended"]
 
 
 class GeminiLiveError(RuntimeError):
@@ -25,6 +27,39 @@ class GeminiEvent:
     text: str | None = None
     audio: bytes | None = None
     detail: str | None = None
+
+
+@dataclass
+class GeminiRuntimeStats:
+    input_chunks_sent: int = 0
+    output_audio_chunks_received: int = 0
+    output_audio_bytes_received: int = 0
+    unsupported_event_count: int = 0
+    first_unsupported_event: str | None = None
+    goaway_count: int = 0
+    reconnect_count: int = 0
+    session_count: int = 0
+    session_resumption_updates: int = 0
+    last_goaway_time_left: str | None = None
+    last_session_end_reason: str | None = None
+    last_error_classification: str | None = None
+
+    def record_unsupported_event(self, detail: str) -> None:
+        self.unsupported_event_count += 1
+        if self.first_unsupported_event is None:
+            self.first_unsupported_event = detail
+
+
+@dataclass(frozen=True)
+class LiveSessionResult:
+    reason: SessionEndReason
+    goaway_time_left: str | None = None
+
+
+@dataclass(frozen=True)
+class FallbackAudioBlob:
+    data: bytes
+    mime_type: str
 
 
 def _field(value: Any, snake_name: str, camel_name: str | None = None) -> Any:
@@ -149,6 +184,14 @@ def go_away_time_left(response: Any) -> str | None:
     return str(time_left) if time_left is not None else "unknown"
 
 
+def has_session_resumption_update(response: Any) -> bool:
+    return _has_non_empty_field(
+        response,
+        "session_resumption_update",
+        "sessionResumptionUpdate",
+    )
+
+
 @contextmanager
 def _suppress_google_genai_translation_config_warning() -> Iterator[None]:
     with warnings.catch_warnings():
@@ -201,6 +244,9 @@ async def apply_events(
     *,
     output_audio_queue: asyncio.Queue[bytes],
     transcript_log: TranscriptLogger | None = None,
+    gemini_stats: GeminiRuntimeStats | None = None,
+    audio_stats: AudioRuntimeStats | None = None,
+    debug_events: bool = False,
 ) -> None:
     for event in events:
         if event.type == "input_transcript" and event.text:
@@ -212,12 +258,191 @@ async def apply_events(
             if transcript_log:
                 transcript_log.output_transcript(event.text)
         elif event.type == "audio" and event.audio is not None:
-            await output_audio_queue.put(event.audio)
+            if gemini_stats is not None:
+                gemini_stats.output_audio_chunks_received += 1
+                gemini_stats.output_audio_bytes_received += len(event.audio)
+            _put_latest_audio(output_audio_queue, event.audio, audio_stats=audio_stats)
             if transcript_log:
                 transcript_log.output_audio(len(event.audio))
         elif event.type == "unsupported":
             detail = event.detail or "unknown event"
-            print(f"Unsupported Gemini event: {detail}")
+            if gemini_stats is not None:
+                gemini_stats.record_unsupported_event(detail)
+            if debug_events:
+                print(f"Unsupported Gemini event: {detail}")
+
+
+def _put_latest_audio(
+    output_audio_queue: asyncio.Queue[bytes],
+    chunk: bytes,
+    *,
+    audio_stats: AudioRuntimeStats | None = None,
+) -> None:
+    while True:
+        try:
+            output_audio_queue.put_nowait(chunk)
+            break
+        except asyncio.QueueFull:
+            try:
+                dropped = output_audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                continue
+            if audio_stats is not None:
+                audio_stats.record_output_drop(dropped)
+    if audio_stats is not None:
+        audio_stats.note_output_async_queue_depth(output_audio_queue.qsize())
+
+
+def drain_output_audio_queue(
+    output_audio_queue: asyncio.Queue[bytes],
+    *,
+    audio_stats: AudioRuntimeStats | None = None,
+) -> int:
+    drained = 0
+    while True:
+        try:
+            dropped = output_audio_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        drained += 1
+        if audio_stats is not None:
+            audio_stats.record_output_drop(dropped, stale=True)
+    return drained
+
+
+def drain_input_audio_queue(
+    input_audio_queue: asyncio.Queue[bytes],
+    *,
+    audio_stats: AudioRuntimeStats | None = None,
+) -> int:
+    drained = 0
+    while True:
+        try:
+            dropped = input_audio_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        drained += 1
+        if audio_stats is not None:
+            audio_stats.record_input_stale_drop(dropped)
+    return drained
+
+
+def classify_gemini_exception(exc: BaseException) -> str:
+    message = str(exc).lower()
+    if any(token in message for token in ("unauth", "permission", "api key", "apikey")):
+        return "auth"
+    if any(token in message for token in ("quota", "rate limit", "resource exhausted")):
+        return "quota_or_rate_limit"
+    if any(token in message for token in ("policy", "1008")):
+        return "policy_or_websocket_close"
+    if any(token in message for token in ("dns", "name resolution", "proxy", "network", "timeout")):
+        return "network"
+    return type(exc).__name__
+
+
+async def run_single_live_translation_session(
+    *,
+    session_factory: Callable[[], AsyncContextManager[Any]],
+    blob_factory: Callable[[bytes], Any],
+    input_audio_queue: asyncio.Queue[bytes],
+    output_audio_queue: asyncio.Queue[bytes],
+    transcript_log: TranscriptLogger,
+    shutdown_event: asyncio.Event,
+    gemini_stats: GeminiRuntimeStats,
+    audio_stats: AudioRuntimeStats | None = None,
+    capture_active_event: asyncio.Event | None = None,
+    debug_events: bool = False,
+) -> LiveSessionResult:
+    gemini_stats.session_count += 1
+    with _suppress_google_genai_translation_config_warning():
+        async with session_factory() as session:
+            print(f"Gemini Live Translation session started with model {MODEL_NAME}")
+
+            async def sender() -> None:
+                while not shutdown_event.is_set():
+                    try:
+                        chunk = await asyncio.wait_for(input_audio_queue.get(), timeout=0.1)
+                    except TimeoutError:
+                        continue
+                    try:
+                        validate_input_chunk(chunk)
+                    except PCMError as exc:
+                        raise GeminiLiveError(str(exc)) from exc
+                    await session.send_realtime_input(audio=blob_factory(chunk))
+                    gemini_stats.input_chunks_sent += 1
+                    if audio_stats is not None:
+                        audio_stats.note_input_queue_depth(input_audio_queue.qsize())
+
+            async def receiver() -> LiveSessionResult:
+                async for response in session.receive():
+                    if shutdown_event.is_set():
+                        return LiveSessionResult(reason="shutdown")
+                    if has_session_resumption_update(response):
+                        gemini_stats.session_resumption_updates += 1
+                    time_left = go_away_time_left(response)
+                    if time_left is not None:
+                        gemini_stats.goaway_count += 1
+                        gemini_stats.last_goaway_time_left = time_left
+                        return LiveSessionResult(reason="goaway", goaway_time_left=time_left)
+
+                    events = extract_gemini_events(response)
+                    await apply_events(
+                        events,
+                        output_audio_queue=output_audio_queue,
+                        transcript_log=transcript_log,
+                        gemini_stats=gemini_stats,
+                        audio_stats=audio_stats,
+                        debug_events=debug_events,
+                    )
+                    if shutdown_event.is_set():
+                        return LiveSessionResult(reason="shutdown")
+                return LiveSessionResult(reason="ended")
+
+            shutdown_task = asyncio.create_task(shutdown_event.wait())
+            stream_tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver())]
+            tasks = [*stream_tasks, shutdown_task]
+            if capture_active_event is not None:
+                capture_active_event.set()
+            try:
+                done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                if shutdown_task in done:
+                    return LiveSessionResult(reason="shutdown")
+                for task in stream_tasks:
+                    if task.done():
+                        result = task.result()
+                        if isinstance(result, LiveSessionResult):
+                            return result
+                return LiveSessionResult(reason="ended")
+            finally:
+                if capture_active_event is not None:
+                    capture_active_event.clear()
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _default_session_factory(
+    *,
+    api_key: str,
+    target_language: str,
+    echo_target_language: bool,
+) -> tuple[Callable[[], AsyncContextManager[Any]], Callable[[bytes], Any]]:
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
+        raise GeminiLiveError("google-genai is required; install requirements.txt first.") from exc
+
+    config = build_live_config(target_language, echo_target_language=echo_target_language)
+    client = genai.Client(api_key=api_key)
+
+    def session_factory() -> AsyncContextManager[Any]:
+        return client.aio.live.connect(model=MODEL_NAME, config=config)
+
+    def blob_factory(chunk: bytes) -> Any:
+        return types.Blob(data=chunk, mime_type=INPUT_MIME_TYPE)
+
+    return session_factory, blob_factory
 
 
 async def run_live_translation(
@@ -229,60 +454,82 @@ async def run_live_translation(
     output_audio_queue: asyncio.Queue[bytes],
     transcript_log: TranscriptLogger,
     shutdown_event: asyncio.Event,
+    gemini_stats: GeminiRuntimeStats | None = None,
+    audio_stats: AudioRuntimeStats | None = None,
+    auto_reconnect: bool = True,
+    max_reconnects: int = 0,
+    debug_events: bool = False,
+    clear_stale_audio: Callable[[], None] | None = None,
+    capture_active_event: asyncio.Event | None = None,
+    session_factory: Callable[[], AsyncContextManager[Any]] | None = None,
+    blob_factory: Callable[[bytes], Any] | None = None,
 ) -> None:
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError as exc:
-        raise GeminiLiveError("google-genai is required; install requirements.txt first.") from exc
+    gemini_stats = gemini_stats or GeminiRuntimeStats()
+    if session_factory is None:
+        session_factory, default_blob_factory = _default_session_factory(
+            api_key=api_key,
+            target_language=target_language,
+            echo_target_language=echo_target_language,
+        )
+        blob_factory = blob_factory or default_blob_factory
+    else:
+        blob_factory = blob_factory or (
+            lambda chunk: FallbackAudioBlob(data=chunk, mime_type=INPUT_MIME_TYPE)
+        )
 
-    config = build_live_config(target_language, echo_target_language=echo_target_language)
-    client = genai.Client(api_key=api_key)
+    while not shutdown_event.is_set():
+        try:
+            result = await run_single_live_translation_session(
+                session_factory=session_factory,
+                blob_factory=blob_factory,
+                input_audio_queue=input_audio_queue,
+                output_audio_queue=output_audio_queue,
+                transcript_log=transcript_log,
+                shutdown_event=shutdown_event,
+                gemini_stats=gemini_stats,
+                audio_stats=audio_stats,
+                capture_active_event=capture_active_event,
+                debug_events=debug_events,
+            )
+        except GeminiLiveError:
+            raise
+        except Exception as exc:
+            classification = classify_gemini_exception(exc)
+            gemini_stats.last_error_classification = classification
+            raise GeminiLiveError(
+                f"Gemini Live Translation failed ({classification}): {exc}"
+            ) from exc
 
-    with _suppress_google_genai_translation_config_warning():
-        async with client.aio.live.connect(model=MODEL_NAME, config=config) as session:
-            print(f"Gemini Live Translation session started with model {MODEL_NAME}")
-
-            async def sender() -> None:
-                while not shutdown_event.is_set():
-                    chunk = await input_audio_queue.get()
-                    try:
-                        validate_input_chunk(chunk)
-                    except PCMError as exc:
-                        raise GeminiLiveError(str(exc)) from exc
-                    await session.send_realtime_input(
-                        audio=types.Blob(data=chunk, mime_type=INPUT_MIME_TYPE)
-                    )
-
-            async def receiver() -> None:
-                async for response in session.receive():
-                    time_left = go_away_time_left(response)
-                    if time_left is not None:
-                        print(f"Gemini sent GoAway; closing session before timeout. time_left={time_left}")
-                        shutdown_event.set()
-                        break
-
-                    events = extract_gemini_events(response)
-                    await apply_events(
-                        events,
-                        output_audio_queue=output_audio_queue,
-                        transcript_log=transcript_log,
-                    )
-                    if shutdown_event.is_set():
-                        break
-
-            shutdown_task = asyncio.create_task(shutdown_event.wait())
-            stream_tasks = [asyncio.create_task(sender()), asyncio.create_task(receiver())]
-            tasks = [*stream_tasks, shutdown_task]
-            try:
-                done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                if shutdown_task in done:
-                    return
-                for task in stream_tasks:
-                    if task.done():
-                        task.result()
-            finally:
-                shutdown_event.set()
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+        gemini_stats.last_session_end_reason = result.reason
+        if result.reason == "goaway":
+            drained_input = drain_input_audio_queue(input_audio_queue, audio_stats=audio_stats)
+            drained = drain_output_audio_queue(output_audio_queue, audio_stats=audio_stats)
+            if clear_stale_audio is not None:
+                clear_stale_audio()
+            if auto_reconnect and (max_reconnects == 0 or gemini_stats.reconnect_count < max_reconnects):
+                gemini_stats.reconnect_count += 1
+                print(
+                    "Gemini sent GoAway; reconnecting before timeout. "
+                    f"time_left={result.goaway_time_left}; "
+                    f"cleared_stale_input_chunks={drained_input}; "
+                    f"cleared_stale_async_chunks={drained}"
+                )
+                continue
+            if auto_reconnect:
+                gemini_stats.last_session_end_reason = "reconnect_limit_reached_after_goaway"
+                print(
+                    "Gemini sent GoAway; reconnect limit reached. "
+                    f"time_left={result.goaway_time_left}; "
+                    f"cleared_stale_input_chunks={drained_input}; "
+                    f"cleared_stale_async_chunks={drained}"
+                )
+            else:
+                gemini_stats.last_session_end_reason = "closed_after_goaway"
+                print(
+                    "Gemini sent GoAway; closing session before timeout. "
+                    f"time_left={result.goaway_time_left}; "
+                    f"cleared_stale_input_chunks={drained_input}; "
+                    f"cleared_stale_async_chunks={drained}"
+                )
+            return
+        return
