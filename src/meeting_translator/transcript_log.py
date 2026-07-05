@@ -21,7 +21,9 @@ class RunSummary:
     ended_at: str | None
     input_device: str
     output_device: str
+    source_language: str
     target_language: str
+    voice_name: str
     received_audio_bytes: int = 0
     input_transcript_segments: int = 0
     output_transcript_segments: int = 0
@@ -35,7 +37,9 @@ class TranscriptLogger:
         *,
         input_device: str,
         output_device: str,
+        source_language: str,
         target_language: str,
+        voice_name: str,
         log_dir: Path = Path("logs"),
     ) -> None:
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -46,7 +50,9 @@ class TranscriptLogger:
             ended_at=None,
             input_device=input_device,
             output_device=output_device,
+            source_language=source_language,
             target_language=target_language,
+            voice_name=voice_name,
         )
         self._write({"type": "start", "summary": asdict(self.summary)})
 

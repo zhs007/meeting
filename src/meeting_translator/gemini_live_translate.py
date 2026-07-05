@@ -108,7 +108,13 @@ def _decode_audio(data: Any) -> bytes:
     raise GeminiLiveError(f"unsupported inline audio payload type: {type(data).__name__}")
 
 
-def build_live_config(target_language: str, *, echo_target_language: bool = False) -> Any:
+def build_live_config(
+    target_language: str,
+    *,
+    source_language: str = "zh-CN",
+    voice_name: str = "Kore",
+    echo_target_language: bool = False,
+) -> Any:
     try:
         from google.genai import types
     except ImportError as exc:
@@ -116,8 +122,20 @@ def build_live_config(target_language: str, *, echo_target_language: bool = Fals
 
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
-        input_audio_transcription=types.AudioTranscriptionConfig(),
+        input_audio_transcription=types.AudioTranscriptionConfig(
+            language_codes=[source_language],
+        ),
         output_audio_transcription=types.AudioTranscriptionConfig(),
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=voice_name,
+                ),
+            ),
+        ),
+        realtime_input_config=types.RealtimeInputConfig(
+            turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+        ),
     )
     # google-genai 1.75.0 does not expose TranslationConfig yet, while the
     # Live Translation API already expects this official wire field.
@@ -424,7 +442,9 @@ async def run_single_live_translation_session(
 def _default_session_factory(
     *,
     api_key: str,
+    source_language: str,
     target_language: str,
+    voice_name: str,
     echo_target_language: bool,
 ) -> tuple[Callable[[], AsyncContextManager[Any]], Callable[[bytes], Any]]:
     try:
@@ -433,7 +453,12 @@ def _default_session_factory(
     except ImportError as exc:
         raise GeminiLiveError("google-genai is required; install requirements.txt first.") from exc
 
-    config = build_live_config(target_language, echo_target_language=echo_target_language)
+    config = build_live_config(
+        target_language,
+        source_language=source_language,
+        voice_name=voice_name,
+        echo_target_language=echo_target_language,
+    )
     client = genai.Client(api_key=api_key)
 
     def session_factory() -> AsyncContextManager[Any]:
@@ -448,7 +473,9 @@ def _default_session_factory(
 async def run_live_translation(
     *,
     api_key: str,
+    source_language: str,
     target_language: str,
+    voice_name: str,
     echo_target_language: bool,
     input_audio_queue: asyncio.Queue[bytes],
     output_audio_queue: asyncio.Queue[bytes],
@@ -468,7 +495,9 @@ async def run_live_translation(
     if session_factory is None:
         session_factory, default_blob_factory = _default_session_factory(
             api_key=api_key,
+            source_language=source_language,
             target_language=target_language,
+            voice_name=voice_name,
             echo_target_language=echo_target_language,
         )
         blob_factory = blob_factory or default_blob_factory

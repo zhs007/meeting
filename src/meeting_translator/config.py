@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 
 DEFAULT_TARGET_LANGUAGE = "en"
+DEFAULT_SOURCE_LANGUAGE = "zh-CN"
+DEFAULT_VOICE_NAME = "Kore"
 DEFAULT_ECHO_TARGET_LANGUAGE = False
 DEFAULT_INPUT_QUEUE_CHUNKS = 8
 DEFAULT_OUTPUT_QUEUE_CHUNKS = 8
@@ -29,7 +31,9 @@ class AppConfig:
     api_key: str | None
     input_device: str | None
     output_device: str | None
+    source_language: str
     target_language: str
+    voice_name: str
     echo_target_language: bool
     input_queue_chunks: int
     output_queue_chunks: int
@@ -166,7 +170,9 @@ def load_config(
     *,
     input_device: str | None = None,
     output_device: str | None = None,
+    source_language: str | None = None,
     target_language: str | None = None,
+    voice_name: str | None = None,
     echo_target_language: bool | None = None,
     input_queue_chunks: int | str | None = None,
     output_queue_chunks: int | str | None = None,
@@ -188,6 +194,13 @@ def load_config(
         api_key=_env_value(env, "GEMINI_API_KEY"),
         input_device=_choose(input_device, env, "MEETING_INPUT_DEVICE"),
         output_device=_choose(output_device, env, "MEETING_OUTPUT_DEVICE"),
+        source_language=_choose(
+            source_language,
+            env,
+            "MEETING_SOURCE_LANGUAGE",
+            DEFAULT_SOURCE_LANGUAGE,
+        )
+        or DEFAULT_SOURCE_LANGUAGE,
         target_language=_choose(
             target_language,
             env,
@@ -195,6 +208,13 @@ def load_config(
             DEFAULT_TARGET_LANGUAGE,
         )
         or DEFAULT_TARGET_LANGUAGE,
+        voice_name=_choose(
+            voice_name,
+            env,
+            "MEETING_VOICE_NAME",
+            DEFAULT_VOICE_NAME,
+        )
+        or DEFAULT_VOICE_NAME,
         echo_target_language=_choose_bool(
             echo_target_language,
             env,

@@ -17,21 +17,27 @@ def test_cli_env_default_priority() -> None:
         "GEMINI_API_KEY": "placeholder-key",
         "MEETING_INPUT_DEVICE": "Env Input",
         "MEETING_OUTPUT_DEVICE": "Env Output",
+        "MEETING_SOURCE_LANGUAGE": "ja",
         "MEETING_TARGET_LANGUAGE": "fr",
+        "MEETING_VOICE_NAME": "Puck",
         "MEETING_ECHO_TARGET_LANGUAGE": "true",
     }
 
     config = load_config(
         input_device="CLI Input",
         output_device=None,
+        source_language="zh-CN",
         target_language="en",
+        voice_name="Kore",
         echo_target_language=False,
         env=env,
     )
 
     assert config.input_device == "CLI Input"
     assert config.output_device == "Env Output"
+    assert config.source_language == "zh-CN"
     assert config.target_language == "en"
+    assert config.voice_name == "Kore"
     assert config.echo_target_language is False
     assert config.input_queue_chunks == DEFAULT_INPUT_QUEUE_CHUNKS
     assert config.output_queue_chunks == DEFAULT_OUTPUT_QUEUE_CHUNKS
@@ -43,7 +49,9 @@ def test_empty_device_env_does_not_select_default_device() -> None:
 
     assert config.input_device is None
     assert config.output_device is None
+    assert config.source_language == "zh-CN"
     assert config.target_language == "en"
+    assert config.voice_name == "Kore"
 
 
 def test_dotenv_loads_when_environment_is_absent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,14 +60,18 @@ def test_dotenv_loads_when_environment_is_absent(tmp_path, monkeypatch: pytest.M
         "GEMINI_API_KEY=placeholder-key\n"
         "MEETING_INPUT_DEVICE=Dotenv Input\n"
         "MEETING_OUTPUT_DEVICE=Dotenv Output\n"
-        "MEETING_TARGET_LANGUAGE=ja\n",
+        "MEETING_SOURCE_LANGUAGE=ko\n"
+        "MEETING_TARGET_LANGUAGE=ja\n"
+        "MEETING_VOICE_NAME=Charon\n",
         encoding="utf-8",
     )
     for name in (
         "GEMINI_API_KEY",
         "MEETING_INPUT_DEVICE",
         "MEETING_OUTPUT_DEVICE",
+        "MEETING_SOURCE_LANGUAGE",
         "MEETING_TARGET_LANGUAGE",
+        "MEETING_VOICE_NAME",
         "MEETING_ECHO_TARGET_LANGUAGE",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -69,7 +81,9 @@ def test_dotenv_loads_when_environment_is_absent(tmp_path, monkeypatch: pytest.M
     assert config.api_key == "placeholder-key"
     assert config.input_device == "Dotenv Input"
     assert config.output_device == "Dotenv Output"
+    assert config.source_language == "ko"
     assert config.target_language == "ja"
+    assert config.voice_name == "Charon"
 
 
 def test_low_latency_config_cli_env_dotenv_default_priority(

@@ -27,7 +27,9 @@ python -m meeting_translator devices
 python -m meeting_translator check \
   --input-device "AirPods 4" \
   --output-device "BlackHole 2ch" \
+  --source-language zh-CN \
   --target-language en \
+  --voice-name Kore \
   --input-queue-chunks 8 \
   --output-queue-chunks 8 \
   --output-thread-queue-chunks 8 \

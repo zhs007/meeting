@@ -38,7 +38,17 @@ def build_parser() -> argparse.ArgumentParser:
     def add_runtime_options(command: argparse.ArgumentParser) -> None:
         command.add_argument("--input-device", default=None)
         command.add_argument("--output-device", default=None)
+        command.add_argument(
+            "--source-language",
+            default=None,
+            help="BCP-47 language code hint for the Gemini input audio",
+        )
         command.add_argument("--target-language", default=None)
+        command.add_argument(
+            "--voice-name",
+            default=None,
+            help="Fixed Gemini output voice name for single-speaker meetings",
+        )
         command.add_argument(
             "--echo-target-language",
             action=argparse.BooleanOptionalAction,
@@ -75,7 +85,9 @@ def _config_from_args(args: argparse.Namespace):
     return load_config(
         input_device=getattr(args, "input_device", None),
         output_device=getattr(args, "output_device", None),
+        source_language=getattr(args, "source_language", None),
         target_language=getattr(args, "target_language", None),
+        voice_name=getattr(args, "voice_name", None),
         echo_target_language=getattr(args, "echo_target_language", None),
         input_queue_chunks=getattr(args, "input_queue_chunks", None),
         output_queue_chunks=getattr(args, "output_queue_chunks", None),
@@ -105,6 +117,8 @@ def check_command(args: argparse.Namespace) -> int:
     chunk_size = expected_pcm16_chunk_size()
     live_config = build_live_config(
         config.target_language,
+        source_language=config.source_language,
+        voice_name=config.voice_name,
         echo_target_language=config.echo_target_language,
     )
     translation_config = live_translation_config_dict(live_config)
@@ -124,7 +138,9 @@ def check_command(args: argparse.Namespace) -> int:
     print(
         "Gemini config OK: "
         f"model={MODEL_NAME}, "
+        f"source_language={config.source_language}, "
         f"target_language_code={translation_config['targetLanguageCode']}, "
+        f"voice_name={config.voice_name}, "
         f"echo_target_language={translation_config['echoTargetLanguage']}, "
         f"config={type(live_config).__name__}"
     )
@@ -239,7 +255,9 @@ async def run_command(args: argparse.Namespace) -> int:
     transcript_log = TranscriptLogger(
         input_device=input_device.name,
         output_device=output_device.name,
+        source_language=config.source_language,
         target_language=config.target_language,
+        voice_name=config.voice_name,
     )
 
     loop = asyncio.get_running_loop()
@@ -288,7 +306,9 @@ async def run_command(args: argparse.Namespace) -> int:
         translation_task = asyncio.create_task(
             run_live_translation(
                 api_key=api_key,
+                source_language=config.source_language,
                 target_language=config.target_language,
+                voice_name=config.voice_name,
                 echo_target_language=config.echo_target_language,
                 input_audio_queue=input_queue,
                 output_audio_queue=output_queue,

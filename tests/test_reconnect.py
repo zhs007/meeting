@@ -57,13 +57,17 @@ async def _run_with_fake_sessions(
     transcript_log = TranscriptLogger(
         input_device="Fake Input",
         output_device="Fake Output",
+        source_language="zh-CN",
         target_language="en",
+        voice_name="Kore",
         log_dir=tmp_path,
     )
 
     await run_live_translation(
         api_key="unused",
+        source_language="zh-CN",
         target_language="en",
+        voice_name="Kore",
         echo_target_language=False,
         input_audio_queue=input_queue,
         output_audio_queue=output_queue,
