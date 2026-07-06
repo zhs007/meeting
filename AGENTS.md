@@ -34,6 +34,8 @@ python -m meeting_translator check \
   --output-queue-chunks 8 \
   --output-thread-queue-chunks 8 \
   --max-playback-buffer-ms 800 \
+  --input-gate-rms 0 \
+  --input-gate-hangover-ms 800 \
   --metrics-interval-sec 10 \
   --auto-reconnect
 python -m meeting_openai_translator devices

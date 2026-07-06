@@ -17,6 +17,8 @@ DEFAULT_INPUT_QUEUE_CHUNKS = 8
 DEFAULT_OUTPUT_QUEUE_CHUNKS = 8
 DEFAULT_OUTPUT_THREAD_QUEUE_CHUNKS = 8
 DEFAULT_MAX_PLAYBACK_BUFFER_MS = 800
+DEFAULT_INPUT_GATE_RMS = 0
+DEFAULT_INPUT_GATE_HANGOVER_MS = 800
 DEFAULT_METRICS_INTERVAL_SEC = 10.0
 DEFAULT_AUTO_RECONNECT = True
 DEFAULT_MAX_RECONNECTS = 0
@@ -40,6 +42,8 @@ class AppConfig:
     output_queue_chunks: int
     output_thread_queue_chunks: int
     max_playback_buffer_ms: int
+    input_gate_rms: int
+    input_gate_hangover_ms: int
     metrics_interval_sec: float
     auto_reconnect: bool
     max_reconnects: int
@@ -188,6 +192,8 @@ def load_config(
     output_queue_chunks: int | str | None = None,
     output_thread_queue_chunks: int | str | None = None,
     max_playback_buffer_ms: int | str | None = None,
+    input_gate_rms: int | str | None = None,
+    input_gate_hangover_ms: int | str | None = None,
     metrics_interval_sec: float | str | None = None,
     auto_reconnect: bool | None = None,
     max_reconnects: int | str | None = None,
@@ -255,6 +261,18 @@ def load_config(
             env,
             "MEETING_MAX_PLAYBACK_BUFFER_MS",
             DEFAULT_MAX_PLAYBACK_BUFFER_MS,
+        ),
+        input_gate_rms=_choose_non_negative_int(
+            input_gate_rms,
+            env,
+            "MEETING_INPUT_GATE_RMS",
+            DEFAULT_INPUT_GATE_RMS,
+        ),
+        input_gate_hangover_ms=_choose_non_negative_int(
+            input_gate_hangover_ms,
+            env,
+            "MEETING_INPUT_GATE_HANGOVER_MS",
+            DEFAULT_INPUT_GATE_HANGOVER_MS,
         ),
         metrics_interval_sec=_choose_non_negative_float(
             metrics_interval_sec,

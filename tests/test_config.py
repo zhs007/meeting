@@ -103,6 +103,8 @@ def test_low_latency_config_cli_env_dotenv_default_priority(
         "MEETING_OUTPUT_QUEUE_CHUNKS=6\n"
         "MEETING_OUTPUT_THREAD_QUEUE_CHUNKS=7\n"
         "MEETING_MAX_PLAYBACK_BUFFER_MS=600\n"
+        "MEETING_INPUT_GATE_RMS=250\n"
+        "MEETING_INPUT_GATE_HANGOVER_MS=900\n"
         "MEETING_METRICS_INTERVAL_SEC=3.5\n"
         "MEETING_AUTO_RECONNECT=false\n"
         "MEETING_MAX_RECONNECTS=2\n"
@@ -115,6 +117,8 @@ def test_low_latency_config_cli_env_dotenv_default_priority(
         "MEETING_OUTPUT_QUEUE_CHUNKS",
         "MEETING_OUTPUT_THREAD_QUEUE_CHUNKS",
         "MEETING_MAX_PLAYBACK_BUFFER_MS",
+        "MEETING_INPUT_GATE_RMS",
+        "MEETING_INPUT_GATE_HANGOVER_MS",
         "MEETING_METRICS_INTERVAL_SEC",
         "MEETING_AUTO_RECONNECT",
         "MEETING_MAX_RECONNECTS",
@@ -130,6 +134,8 @@ def test_low_latency_config_cli_env_dotenv_default_priority(
     assert config.output_queue_chunks == 11
     assert config.output_thread_queue_chunks == 7
     assert config.max_playback_buffer_ms == 600
+    assert config.input_gate_rms == 250
+    assert config.input_gate_hangover_ms == 900
     assert config.metrics_interval_sec == 3.5
     assert config.auto_reconnect is False
     assert config.max_reconnects == 2
@@ -144,6 +150,16 @@ def test_low_latency_config_rejects_non_positive_queue_size() -> None:
 def test_low_latency_config_rejects_invalid_boolean() -> None:
     with pytest.raises(ConfigError, match="MEETING_AUTO_RECONNECT"):
         load_config(env={"MEETING_AUTO_RECONNECT": "maybe"})
+
+
+def test_input_gate_rms_rejects_negative_value() -> None:
+    with pytest.raises(ConfigError, match="MEETING_INPUT_GATE_RMS"):
+        load_config(env={"MEETING_INPUT_GATE_RMS": "-1"})
+
+
+def test_input_gate_hangover_rejects_negative_value() -> None:
+    with pytest.raises(ConfigError, match="MEETING_INPUT_GATE_HANGOVER_MS"):
+        load_config(env={"MEETING_INPUT_GATE_HANGOVER_MS": "-1"})
 
 
 def test_missing_gemini_key_error_does_not_leak_secret_name_value() -> None:

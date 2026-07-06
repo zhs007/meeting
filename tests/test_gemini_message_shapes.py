@@ -113,7 +113,7 @@ def test_live_translation_config_carries_official_wire_shape() -> None:
     }
 
 
-def test_live_translation_config_locks_source_language_and_voice() -> None:
+def test_live_translation_config_uses_supported_transcription_config_and_voice() -> None:
     config = build_live_config(
         "en",
         source_language="zh-CN",
@@ -121,7 +121,9 @@ def test_live_translation_config_locks_source_language_and_voice() -> None:
         echo_target_language=False,
     )
 
-    assert config.input_audio_transcription.language_codes == ["zh-CN"]
+    assert config.input_audio_transcription.language_codes is None
+    assert "expected source language is zh-CN" in config.system_instruction
+    assert "do not invent transcript text" in config.system_instruction
     assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
     assert config.realtime_input_config.turn_coverage == "TURN_INCLUDES_ONLY_ACTIVITY"
 
@@ -129,5 +131,5 @@ def test_live_translation_config_locks_source_language_and_voice() -> None:
 def test_live_translation_config_can_restore_gemini_default_voice_behavior() -> None:
     config = build_live_config("en", source_language="zh-CN", voice_name=None)
 
-    assert config.input_audio_transcription.language_codes == ["zh-CN"]
+    assert config.input_audio_transcription.language_codes is None
     assert config.speech_config is None

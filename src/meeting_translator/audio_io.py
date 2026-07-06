@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import queue
 from dataclasses import dataclass, field
 from typing import Any
 
 from meeting_translator.pcm import (
     INPUT_CHANNELS,
+    INPUT_CHUNK_MS,
     INPUT_DTYPE,
     INPUT_SAMPLE_RATE,
     INPUT_SAMPLES_PER_CHUNK,
@@ -22,11 +24,28 @@ def output_bytes_to_ms(byte_count: int) -> int:
     return round(byte_count * 1000 / bytes_per_second)
 
 
+def pcm16_rms(chunk: bytes) -> int:
+    if not chunk:
+        return 0
+    even_byte_count = len(chunk) - (len(chunk) % PCM16_BYTES_PER_SAMPLE)
+    if even_byte_count == 0:
+        return 0
+    samples = memoryview(chunk[:even_byte_count]).cast("h")
+    if len(samples) == 0:
+        return 0
+    return round(math.sqrt(sum(sample * sample for sample in samples) / len(samples)))
+
+
 @dataclass
 class AudioRuntimeStats:
     input_chunks_captured: int = 0
     input_chunks_queued: int = 0
     input_dropped_while_disconnected: int = 0
+    input_gate_suppressed_chunks: int = 0
+    input_gate_suppressed_bytes: int = 0
+    input_gate_hangover_kept_chunks: int = 0
+    input_last_rms: int = 0
+    input_max_rms: int = 0
     input_stale_cleared_chunks: int = 0
     input_stale_cleared_bytes: int = 0
     input_overflows: int = 0
@@ -50,6 +69,19 @@ class AudioRuntimeStats:
 
     def record_input_drop_while_disconnected(self, chunk: bytes) -> None:
         self.input_dropped_while_disconnected += 1
+
+    def note_input_rms(self, rms: int) -> None:
+        self.input_last_rms = rms
+        self.input_max_rms = max(self.input_max_rms, rms)
+
+    def record_input_gate_suppression(self, chunk: bytes, *, rms: int) -> None:
+        self.input_gate_suppressed_chunks += 1
+        self.input_gate_suppressed_bytes += len(chunk)
+        self.note_input_rms(rms)
+
+    def record_input_gate_hangover_keep(self, *, rms: int) -> None:
+        self.input_gate_hangover_kept_chunks += 1
+        self.note_input_rms(rms)
 
     def record_input_stale_drop(self, chunk: bytes) -> None:
         self.input_stale_cleared_chunks += 1
@@ -85,6 +117,8 @@ class RawAudioInput:
         stats: AudioRuntimeStats,
         overflow_event: asyncio.Event | None = None,
         capture_enabled_event: asyncio.Event | None = None,
+        input_gate_rms: int = 0,
+        input_gate_hangover_ms: int = 800,
     ) -> None:
         import sounddevice as sd
 
@@ -93,6 +127,12 @@ class RawAudioInput:
         self._stats = stats
         self._overflow_event = overflow_event
         self._capture_enabled_event = capture_enabled_event
+        self._input_gate_rms = input_gate_rms
+        self._input_gate_hangover_chunks = max(
+            0,
+            math.ceil(input_gate_hangover_ms / INPUT_CHUNK_MS),
+        )
+        self._input_gate_hangover_remaining = 0
         self._stream = sd.RawInputStream(
             device=device_index,
             samplerate=INPUT_SAMPLE_RATE,
@@ -109,14 +149,28 @@ class RawAudioInput:
         self._stats.input_chunks_captured += 1
 
         def offer() -> None:
+            queued_chunk = chunk
             if (
                 self._capture_enabled_event is not None
                 and not self._capture_enabled_event.is_set()
             ):
-                self._stats.record_input_drop_while_disconnected(chunk)
+                self._stats.record_input_drop_while_disconnected(queued_chunk)
                 return
+            rms = pcm16_rms(queued_chunk)
+            if self._input_gate_rms > 0:
+                if rms >= self._input_gate_rms:
+                    self._input_gate_hangover_remaining = self._input_gate_hangover_chunks
+                    self._stats.note_input_rms(rms)
+                elif self._input_gate_hangover_remaining > 0:
+                    self._input_gate_hangover_remaining -= 1
+                    self._stats.record_input_gate_hangover_keep(rms=rms)
+                else:
+                    self._stats.record_input_gate_suppression(queued_chunk, rms=rms)
+                    return
+            else:
+                self._stats.note_input_rms(rms)
             try:
-                self._queue.put_nowait(chunk)
+                self._queue.put_nowait(queued_chunk)
                 self._stats.input_chunks_queued += 1
                 self._stats.note_input_queue_depth(self._queue.qsize())
             except asyncio.QueueFull:

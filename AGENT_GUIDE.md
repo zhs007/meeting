@@ -40,7 +40,7 @@ AirPods 4 麦克风中文语音
   - `python -m pytest`
   - `python -m ruff check .`
   - `python -m meeting_translator devices`
-  - `python -m meeting_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --source-language zh-CN --target-language en --voice-name Kore --input-queue-chunks 8 --output-queue-chunks 8 --output-thread-queue-chunks 8 --max-playback-buffer-ms 800 --metrics-interval-sec 10 --auto-reconnect`
+  - `python -m meeting_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --source-language zh-CN --target-language en --voice-name Kore --input-queue-chunks 8 --output-queue-chunks 8 --output-thread-queue-chunks 8 --max-playback-buffer-ms 800 --input-gate-rms 0 --input-gate-hangover-ms 800 --metrics-interval-sec 10 --auto-reconnect`
   - `python -m meeting_openai_translator devices`
   - `python -m meeting_openai_translator check --input-device "AirPods 4" --output-device "BlackHole 2ch" --target-language en`
 - 设备名不能隐式兜底到系统默认设备；缺设备、设备找不到、采样率/声道/dtype 不支持都必须显式失败。

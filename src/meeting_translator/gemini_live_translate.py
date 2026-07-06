@@ -108,6 +108,16 @@ def _decode_audio(data: Any) -> bytes:
     raise GeminiLiveError(f"unsupported inline audio payload type: {type(data).__name__}")
 
 
+def _source_language_guard_instruction(source_language: str, target_language: str) -> str:
+    return (
+        "You are a live meeting translator. "
+        f"The expected source language is {source_language}. "
+        f"Translate only clear speech from that source language to {target_language}. "
+        "Ignore silence, breathing, microphone noise, and unclear audio; do not invent transcript text. "
+        "Do not switch to another source language because of silence, noise, or prior transcript artifacts."
+    )
+
+
 def build_live_config(
     target_language: str,
     *,
@@ -132,9 +142,8 @@ def build_live_config(
 
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
-        input_audio_transcription=types.AudioTranscriptionConfig(
-            language_codes=[source_language],
-        ),
+        system_instruction=_source_language_guard_instruction(source_language, target_language),
+        input_audio_transcription=types.AudioTranscriptionConfig(),
         output_audio_transcription=types.AudioTranscriptionConfig(),
         speech_config=speech_config,
         realtime_input_config=types.RealtimeInputConfig(

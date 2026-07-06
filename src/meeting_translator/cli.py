@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument(
             "--source-language",
             default=None,
-            help="BCP-47 language code hint for the Gemini input audio",
+            help="Expected source language label used for logs and Gemini language guard",
         )
         command.add_argument("--target-language", default=None)
         command.add_argument(
@@ -63,6 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--output-queue-chunks", type=int, default=None)
         command.add_argument("--output-thread-queue-chunks", type=int, default=None)
         command.add_argument("--max-playback-buffer-ms", type=int, default=None)
+        command.add_argument(
+            "--input-gate-rms",
+            type=int,
+            default=None,
+            help="Suppress idle input chunks below this PCM16 RMS; 0 disables the gate",
+        )
+        command.add_argument(
+            "--input-gate-hangover-ms",
+            type=int,
+            default=None,
+            help="Keep low-RMS chunks for this many ms after speech is detected",
+        )
         command.add_argument("--metrics-interval-sec", type=float, default=None)
         command.add_argument(
             "--auto-reconnect",
@@ -97,6 +109,8 @@ def _config_from_args(args: argparse.Namespace):
         output_queue_chunks=getattr(args, "output_queue_chunks", None),
         output_thread_queue_chunks=getattr(args, "output_thread_queue_chunks", None),
         max_playback_buffer_ms=getattr(args, "max_playback_buffer_ms", None),
+        input_gate_rms=getattr(args, "input_gate_rms", None),
+        input_gate_hangover_ms=getattr(args, "input_gate_hangover_ms", None),
         metrics_interval_sec=getattr(args, "metrics_interval_sec", None),
         auto_reconnect=getattr(args, "auto_reconnect", None),
         max_reconnects=getattr(args, "max_reconnects", None),
@@ -142,7 +156,7 @@ def check_command(args: argparse.Namespace) -> int:
     print(
         "Gemini config OK: "
         f"model={MODEL_NAME}, "
-        f"source_language={config.source_language}, "
+        f"source_language_label={config.source_language}, "
         f"target_language_code={translation_config['targetLanguageCode']}, "
         f"voice_name={_display_voice_name(config.voice_name)}, "
         f"echo_target_language={translation_config['echoTargetLanguage']}, "
@@ -154,6 +168,8 @@ def check_command(args: argparse.Namespace) -> int:
         f"output_queue_chunks={config.output_queue_chunks}, "
         f"output_thread_queue_chunks={config.output_thread_queue_chunks}, "
         f"max_playback_buffer_ms={config.max_playback_buffer_ms}, "
+        f"input_gate_rms={config.input_gate_rms}, "
+        f"input_gate_hangover_ms={config.input_gate_hangover_ms}, "
         f"metrics_interval_sec={config.metrics_interval_sec:g}, "
         f"auto_reconnect={config.auto_reconnect}, "
         f"max_reconnects={config.max_reconnects}, "
@@ -180,6 +196,8 @@ def _collect_runtime_metrics(
             "output_queue_chunks": config.output_queue_chunks,
             "output_thread_queue_chunks": config.output_thread_queue_chunks,
             "max_playback_buffer_ms": config.max_playback_buffer_ms,
+            "input_gate_rms": config.input_gate_rms,
+            "input_gate_hangover_ms": config.input_gate_hangover_ms,
             "metrics_interval_sec": config.metrics_interval_sec,
             "auto_reconnect": config.auto_reconnect,
             "max_reconnects": config.max_reconnects,
@@ -234,6 +252,9 @@ async def _metrics_reporter(
                 f"output_q={current['output_queue_depth']}/{config.output_queue_chunks} "
                 f"thread_q={current['thread_queue_depth']}/{config.output_thread_queue_chunks} "
                 f"playback_buffer_ms={current['playback_buffer_ms']} "
+                f"input_gate_suppressed={audio['input_gate_suppressed_chunks']} "
+                f"input_gate_kept={audio['input_gate_hangover_kept_chunks']} "
+                f"input_rms={audio['input_last_rms']} "
                 f"dropped_output={audio['output_dropped_chunks']} "
                 f"input_overflows={audio['input_overflows']} "
                 f"reconnects={gemini['reconnect_count']} "
@@ -272,6 +293,8 @@ async def run_command(args: argparse.Namespace) -> int:
         stats=stats,
         overflow_event=input_overflow_event,
         capture_enabled_event=capture_active_event,
+        input_gate_rms=config.input_gate_rms,
+        input_gate_hangover_ms=config.input_gate_hangover_ms,
     )
     audio_output = RawAudioOutput(
         device_index=output_device.index,
@@ -407,6 +430,13 @@ async def run_command(args: argparse.Namespace) -> int:
             print(
                 "Input chunks dropped while Gemini session was disconnected: "
                 f"{stats.input_dropped_while_disconnected}",
+                file=sys.stderr,
+            )
+        if stats.input_gate_suppressed_chunks:
+            print(
+                "Input chunks suppressed by RMS gate: "
+                f"{stats.input_gate_suppressed_chunks} "
+                f"({stats.input_gate_suppressed_bytes} bytes)",
                 file=sys.stderr,
             )
         if stats.input_stale_cleared_chunks:

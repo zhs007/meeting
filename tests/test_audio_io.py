@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import queue
 
-from meeting_translator.audio_io import AudioRuntimeStats, RawAudioInput, RawAudioOutput
+from meeting_translator.audio_io import AudioRuntimeStats, RawAudioInput, RawAudioOutput, pcm16_rms
 from meeting_translator.config import (
     DEFAULT_MAX_PLAYBACK_BUFFER_MS,
     DEFAULT_OUTPUT_QUEUE_CHUNKS,
@@ -76,6 +76,9 @@ def test_input_queue_full_records_overflow_and_sets_error_signal() -> None:
         input_audio._stats = AudioRuntimeStats()
         input_audio._overflow_event = asyncio.Event()
         input_audio._capture_enabled_event = None
+        input_audio._input_gate_rms = 0
+        input_audio._input_gate_hangover_chunks = 0
+        input_audio._input_gate_hangover_remaining = 0
         await input_audio._queue.put(b"old")
 
         input_audio._callback(b"new", frames=1, time_info=None, status=None)
@@ -98,6 +101,9 @@ def test_input_callback_drops_while_capture_is_disconnected_without_overflow() -
         input_audio._stats = AudioRuntimeStats()
         input_audio._overflow_event = asyncio.Event()
         input_audio._capture_enabled_event = asyncio.Event()
+        input_audio._input_gate_rms = 0
+        input_audio._input_gate_hangover_chunks = 0
+        input_audio._input_gate_hangover_remaining = 0
         await input_audio._queue.put(b"old")
 
         input_audio._callback(b"new", frames=1, time_info=None, status=None)
@@ -111,3 +117,122 @@ def test_input_callback_drops_while_capture_is_disconnected_without_overflow() -
     assert not overflow_event.is_set()
     assert stats.input_dropped_while_disconnected == 1
     assert stats.input_overflows == 0
+
+
+def test_pcm16_rms_calculates_input_energy() -> None:
+    assert pcm16_rms(b"\x00\x00\x00\x00") == 0
+    assert pcm16_rms((1000).to_bytes(2, "little", signed=True) * 4) == 1000
+
+
+def test_input_gate_suppresses_idle_low_rms_chunks_before_queueing() -> None:
+    async def exercise() -> tuple[AudioRuntimeStats, asyncio.Queue[bytes]]:
+        input_audio = object.__new__(RawAudioInput)
+        input_audio._queue = asyncio.Queue(maxsize=2)
+        input_audio._loop = asyncio.get_running_loop()
+        input_audio._stats = AudioRuntimeStats()
+        input_audio._overflow_event = asyncio.Event()
+        input_audio._capture_enabled_event = None
+        input_audio._input_gate_rms = 300
+        input_audio._input_gate_hangover_chunks = 8
+        input_audio._input_gate_hangover_remaining = 0
+
+        input_audio._callback(b"\x00\x00" * 1600, frames=1600, time_info=None, status=None)
+        await asyncio.sleep(0)
+
+        return input_audio._stats, input_audio._queue
+
+    stats, input_queue = asyncio.run(exercise())
+
+    assert input_queue.qsize() == 0
+    assert stats.input_gate_suppressed_chunks == 1
+    assert stats.input_gate_suppressed_bytes == 3200
+    assert stats.input_chunks_queued == 0
+
+
+def test_input_gate_allows_high_rms_chunks_to_queue() -> None:
+    async def exercise() -> tuple[AudioRuntimeStats, asyncio.Queue[bytes]]:
+        input_audio = object.__new__(RawAudioInput)
+        input_audio._queue = asyncio.Queue(maxsize=2)
+        input_audio._loop = asyncio.get_running_loop()
+        input_audio._stats = AudioRuntimeStats()
+        input_audio._overflow_event = asyncio.Event()
+        input_audio._capture_enabled_event = None
+        input_audio._input_gate_rms = 300
+        input_audio._input_gate_hangover_chunks = 8
+        input_audio._input_gate_hangover_remaining = 0
+        chunk = (1000).to_bytes(2, "little", signed=True) * 1600
+
+        input_audio._callback(chunk, frames=1600, time_info=None, status=None)
+        await asyncio.sleep(0)
+
+        return input_audio._stats, input_audio._queue
+
+    stats, input_queue = asyncio.run(exercise())
+
+    assert input_queue.qsize() == 1
+    assert stats.input_gate_suppressed_chunks == 0
+    assert stats.input_chunks_queued == 1
+    assert stats.input_last_rms == 1000
+
+
+def test_input_gate_hangover_keeps_low_rms_chunks_after_speech() -> None:
+    async def exercise() -> tuple[AudioRuntimeStats, asyncio.Queue[bytes], int]:
+        input_audio = object.__new__(RawAudioInput)
+        input_audio._queue = asyncio.Queue(maxsize=4)
+        input_audio._loop = asyncio.get_running_loop()
+        input_audio._stats = AudioRuntimeStats()
+        input_audio._overflow_event = asyncio.Event()
+        input_audio._capture_enabled_event = None
+        input_audio._input_gate_rms = 300
+        input_audio._input_gate_hangover_chunks = 2
+        input_audio._input_gate_hangover_remaining = 0
+        loud = (1000).to_bytes(2, "little", signed=True) * 1600
+        quiet = (100).to_bytes(2, "little", signed=True) * 1600
+
+        input_audio._callback(loud, frames=1600, time_info=None, status=None)
+        input_audio._callback(quiet, frames=1600, time_info=None, status=None)
+        await asyncio.sleep(0)
+
+        return (
+            input_audio._stats,
+            input_audio._queue,
+            input_audio._input_gate_hangover_remaining,
+        )
+
+    stats, input_queue, remaining = asyncio.run(exercise())
+
+    assert input_queue.qsize() == 2
+    assert stats.input_gate_hangover_kept_chunks == 1
+    assert stats.input_gate_suppressed_chunks == 0
+    assert remaining == 1
+
+
+def test_input_gate_suppresses_low_rms_after_hangover_expires() -> None:
+    loud = (1000).to_bytes(2, "little", signed=True) * 1600
+    quiet = (100).to_bytes(2, "little", signed=True) * 1600
+
+    async def exercise() -> tuple[AudioRuntimeStats, asyncio.Queue[bytes]]:
+        input_audio = object.__new__(RawAudioInput)
+        input_audio._queue = asyncio.Queue(maxsize=4)
+        input_audio._loop = asyncio.get_running_loop()
+        input_audio._stats = AudioRuntimeStats()
+        input_audio._overflow_event = asyncio.Event()
+        input_audio._capture_enabled_event = None
+        input_audio._input_gate_rms = 300
+        input_audio._input_gate_hangover_chunks = 1
+        input_audio._input_gate_hangover_remaining = 0
+
+        input_audio._callback(loud, frames=1600, time_info=None, status=None)
+        input_audio._callback(quiet, frames=1600, time_info=None, status=None)
+        input_audio._callback(quiet, frames=1600, time_info=None, status=None)
+        await asyncio.sleep(0)
+
+        return input_audio._stats, input_audio._queue
+
+    stats, input_queue = asyncio.run(exercise())
+
+    assert input_queue.qsize() == 2
+    assert stats.input_gate_hangover_kept_chunks == 1
+    assert stats.input_gate_suppressed_chunks == 1
+    assert input_queue.get_nowait() == loud
+    assert input_queue.get_nowait() == quiet
