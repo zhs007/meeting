@@ -124,3 +124,10 @@ def test_live_translation_config_locks_source_language_and_voice() -> None:
     assert config.input_audio_transcription.language_codes == ["zh-CN"]
     assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
     assert config.realtime_input_config.turn_coverage == "TURN_INCLUDES_ONLY_ACTIVITY"
+
+
+def test_live_translation_config_can_restore_gemini_default_voice_behavior() -> None:
+    config = build_live_config("en", source_language="zh-CN", voice_name=None)
+
+    assert config.input_audio_transcription.language_codes == ["zh-CN"]
+    assert config.speech_config is None

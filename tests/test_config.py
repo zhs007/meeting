@@ -54,6 +54,12 @@ def test_empty_device_env_does_not_select_default_device() -> None:
     assert config.voice_name == "Kore"
 
 
+def test_voice_name_auto_restores_gemini_default_voice_behavior() -> None:
+    config = load_config(env={"MEETING_VOICE_NAME": "auto"})
+
+    assert config.voice_name is None
+
+
 def test_dotenv_loads_when_environment_is_absent(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     dotenv = tmp_path / ".env"
     dotenv.write_text(

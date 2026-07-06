@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 DEFAULT_TARGET_LANGUAGE = "en"
 DEFAULT_SOURCE_LANGUAGE = "zh-CN"
 DEFAULT_VOICE_NAME = "Kore"
+AUTO_VOICE_NAME = "auto"
 DEFAULT_ECHO_TARGET_LANGUAGE = False
 DEFAULT_INPUT_QUEUE_CHUNKS = 8
 DEFAULT_OUTPUT_QUEUE_CHUNKS = 8
@@ -33,7 +34,7 @@ class AppConfig:
     output_device: str | None
     source_language: str
     target_language: str
-    voice_name: str
+    voice_name: str | None
     echo_target_language: bool
     input_queue_chunks: int
     output_queue_chunks: int
@@ -69,6 +70,15 @@ def _choose(
     if env_config is not None:
         return env_config
     return default
+
+
+def _parse_voice_name(value: str | None) -> str | None:
+    cleaned = _blank_to_none(value)
+    if cleaned is None:
+        return DEFAULT_VOICE_NAME
+    if cleaned.lower() == AUTO_VOICE_NAME:
+        return None
+    return cleaned
 
 
 def parse_bool(value: str, name: str) -> bool:
@@ -208,13 +218,14 @@ def load_config(
             DEFAULT_TARGET_LANGUAGE,
         )
         or DEFAULT_TARGET_LANGUAGE,
-        voice_name=_choose(
-            voice_name,
-            env,
-            "MEETING_VOICE_NAME",
-            DEFAULT_VOICE_NAME,
-        )
-        or DEFAULT_VOICE_NAME,
+        voice_name=_parse_voice_name(
+            _choose(
+                voice_name,
+                env,
+                "MEETING_VOICE_NAME",
+                DEFAULT_VOICE_NAME,
+            )
+        ),
         echo_target_language=_choose_bool(
             echo_target_language,
             env,

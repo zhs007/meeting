@@ -28,6 +28,10 @@ from meeting_translator.pcm import expected_pcm16_chunk_size
 from meeting_translator.transcript_log import TranscriptLogger
 
 
+def _display_voice_name(voice_name: str | None) -> str:
+    return voice_name or "auto"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="meeting_translator")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -47,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument(
             "--voice-name",
             default=None,
-            help="Fixed Gemini output voice name for single-speaker meetings",
+            help="Fixed Gemini output voice name; use 'auto' for Gemini default voice behavior",
         )
         command.add_argument(
             "--echo-target-language",
@@ -140,7 +144,7 @@ def check_command(args: argparse.Namespace) -> int:
         f"model={MODEL_NAME}, "
         f"source_language={config.source_language}, "
         f"target_language_code={translation_config['targetLanguageCode']}, "
-        f"voice_name={config.voice_name}, "
+        f"voice_name={_display_voice_name(config.voice_name)}, "
         f"echo_target_language={translation_config['echoTargetLanguage']}, "
         f"config={type(live_config).__name__}"
     )
@@ -257,7 +261,7 @@ async def run_command(args: argparse.Namespace) -> int:
         output_device=output_device.name,
         source_language=config.source_language,
         target_language=config.target_language,
-        voice_name=config.voice_name,
+        voice_name=_display_voice_name(config.voice_name),
     )
 
     loop = asyncio.get_running_loop()

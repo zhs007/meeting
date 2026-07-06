@@ -93,7 +93,7 @@ MEETING_DEBUG_EVENTS=false
 
 设备名没有隐式默认值。未通过命令行、环境变量或 `.env` 指定设备时，`check` 和 `run` 会失败并提示先列设备。
 
-Gemini 原型默认使用 `MEETING_SOURCE_LANGUAGE=zh-CN` 作为输入音频转写语言 hint，并固定 `MEETING_VOICE_NAME=Kore` 作为输出声线，适合单人会议里保持译员声音稳定。如果源输入不是中文，可用 `--source-language ja` 等 BCP-47 语言码覆盖；如果想换固定声线，可用 `--voice-name Charon` 等 Gemini 预置 voice 名覆盖。Gemini 原型默认使用低延迟本地队列：输入队列 8 个 100ms chunk，Gemini 输出 asyncio 队列 8 个 chunk，输出线程队列 8 个 chunk，播放缓冲最多 800ms。旧音频只会按明确低延迟策略丢弃，并在运行摘要中计数；输入队列溢出会显式停止本次运行，不会静默堆积多秒延迟。启动和 GoAway 重连期间会等 Gemini session ready 后再把麦克风音频放入输入队列，断开窗口里的输入 chunk 会作为 `input_dropped_while_disconnected` 计数。
+Gemini 原型默认使用 `MEETING_SOURCE_LANGUAGE=zh-CN` 作为输入音频转写语言 hint，并固定 `MEETING_VOICE_NAME=Kore` 作为输出声线，适合单人会议里保持译员声音稳定。如果源输入不是中文，可用 `--source-language ja` 等 BCP-47 语言码覆盖；如果想换固定声线，可用 `--voice-name Charon` 等 Gemini 预置 voice 名覆盖；如果要回到旧行为，让 Gemini 自己决定声线，可设置 `MEETING_VOICE_NAME=auto` 或传 `--voice-name auto`。Gemini 原型默认使用低延迟本地队列：输入队列 8 个 100ms chunk，Gemini 输出 asyncio 队列 8 个 chunk，输出线程队列 8 个 chunk，播放缓冲最多 800ms。旧音频只会按明确低延迟策略丢弃，并在运行摘要中计数；输入队列溢出会显式停止本次运行，不会静默堆积多秒延迟。启动和 GoAway 重连期间会等 Gemini session ready 后再把麦克风音频放入输入队列，断开窗口里的输入 chunk 会作为 `input_dropped_while_disconnected` 计数。
 
 ### 列设备
 

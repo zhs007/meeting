@@ -112,7 +112,7 @@ def build_live_config(
     target_language: str,
     *,
     source_language: str = "zh-CN",
-    voice_name: str = "Kore",
+    voice_name: str | None = "Kore",
     echo_target_language: bool = False,
 ) -> Any:
     try:
@@ -120,19 +120,23 @@ def build_live_config(
     except ImportError as exc:
         raise GeminiLiveError("google-genai is required; install requirements.txt first.") from exc
 
+    speech_config = None
+    if voice_name is not None:
+        speech_config = types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=voice_name,
+                ),
+            ),
+        )
+
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         input_audio_transcription=types.AudioTranscriptionConfig(
             language_codes=[source_language],
         ),
         output_audio_transcription=types.AudioTranscriptionConfig(),
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=voice_name,
-                ),
-            ),
-        ),
+        speech_config=speech_config,
         realtime_input_config=types.RealtimeInputConfig(
             turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
         ),
@@ -444,7 +448,7 @@ def _default_session_factory(
     api_key: str,
     source_language: str,
     target_language: str,
-    voice_name: str,
+    voice_name: str | None,
     echo_target_language: bool,
 ) -> tuple[Callable[[], AsyncContextManager[Any]], Callable[[bytes], Any]]:
     try:
@@ -475,7 +479,7 @@ async def run_live_translation(
     api_key: str,
     source_language: str,
     target_language: str,
-    voice_name: str,
+    voice_name: str | None,
     echo_target_language: bool,
     input_audio_queue: asyncio.Queue[bytes],
     output_audio_queue: asyncio.Queue[bytes],
