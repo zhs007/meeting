@@ -123,6 +123,8 @@ def test_live_translation_config_uses_supported_transcription_config_and_voice()
 
     assert config.input_audio_transcription.language_codes is None
     assert "expected source language is zh-CN" in config.system_instruction
+    assert "single-speaker meeting" in config.system_instruction
+    assert "stable interpreter persona" in config.system_instruction
     assert "do not invent transcript text" in config.system_instruction
     assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
     assert config.realtime_input_config.turn_coverage == "TURN_INCLUDES_ONLY_ACTIVITY"

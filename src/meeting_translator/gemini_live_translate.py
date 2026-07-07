@@ -113,6 +113,8 @@ def _source_language_guard_instruction(source_language: str, target_language: st
         "You are a live meeting translator. "
         f"The expected source language is {source_language}. "
         f"Translate only clear speech from that source language to {target_language}. "
+        "This is a single-speaker meeting; do not infer speaker changes. "
+        "Keep one stable interpreter persona, voice style, and speaking tone throughout the session. "
         "Ignore silence, breathing, microphone noise, and unclear audio; do not invent transcript text. "
         "Do not switch to another source language because of silence, noise, or prior transcript artifacts."
     )
