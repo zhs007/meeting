@@ -17,12 +17,39 @@ DEFAULT_INPUT_QUEUE_CHUNKS = 8
 DEFAULT_OUTPUT_QUEUE_CHUNKS = 8
 DEFAULT_OUTPUT_THREAD_QUEUE_CHUNKS = 8
 DEFAULT_MAX_PLAYBACK_BUFFER_MS = 800
+DEFAULT_OUTPUT_PREBUFFER_MS = 300
 DEFAULT_INPUT_GATE_RMS = 0
 DEFAULT_INPUT_GATE_HANGOVER_MS = 800
+DEFAULT_GEMINI_ACTIVITY_HANDLING = "NO_INTERRUPTION"
+DEFAULT_GEMINI_END_SENSITIVITY = "END_SENSITIVITY_LOW"
+DEFAULT_GEMINI_SILENCE_DURATION_MS = 1200
 DEFAULT_METRICS_INTERVAL_SEC = 10.0
 DEFAULT_AUTO_RECONNECT = True
 DEFAULT_MAX_RECONNECTS = 0
 DEFAULT_DEBUG_EVENTS = False
+
+_GEMINI_ACTIVITY_HANDLING_ALIASES = {
+    "default": None,
+    "auto": None,
+    "unspecified": None,
+    "start_of_activity_interrupts": "START_OF_ACTIVITY_INTERRUPTS",
+    "start_interrupts": "START_OF_ACTIVITY_INTERRUPTS",
+    "interrupts": "START_OF_ACTIVITY_INTERRUPTS",
+    "no_interruption": "NO_INTERRUPTION",
+    "no_interrupt": "NO_INTERRUPTION",
+    "nointerrupt": "NO_INTERRUPTION",
+}
+
+_GEMINI_END_SENSITIVITY_ALIASES = {
+    "default": None,
+    "auto": None,
+    "unspecified": None,
+    "end_sensitivity_unspecified": None,
+    "low": "END_SENSITIVITY_LOW",
+    "end_sensitivity_low": "END_SENSITIVITY_LOW",
+    "high": "END_SENSITIVITY_HIGH",
+    "end_sensitivity_high": "END_SENSITIVITY_HIGH",
+}
 
 
 class ConfigError(ValueError):
@@ -42,8 +69,12 @@ class AppConfig:
     output_queue_chunks: int
     output_thread_queue_chunks: int
     max_playback_buffer_ms: int
+    output_prebuffer_ms: int
     input_gate_rms: int
     input_gate_hangover_ms: int
+    gemini_activity_handling: str | None
+    gemini_end_sensitivity: str | None
+    gemini_silence_duration_ms: int
     metrics_interval_sec: float
     auto_reconnect: bool
     max_reconnects: int
@@ -83,6 +114,22 @@ def _parse_voice_name(value: str | None) -> str | None:
     if cleaned.lower() == AUTO_VOICE_NAME:
         return None
     return cleaned
+
+
+def _parse_optional_alias(
+    value: str | None,
+    *,
+    name: str,
+    aliases: Mapping[str, str | None],
+    accepted: str,
+) -> str | None:
+    cleaned = _blank_to_none(value)
+    if cleaned is None:
+        return None
+    normalized = cleaned.strip().lower().replace("-", "_")
+    if normalized not in aliases:
+        raise ConfigError(f"{name} must be one of {accepted}, got {value!r}")
+    return aliases[normalized]
 
 
 def parse_bool(value: str, name: str) -> bool:
@@ -192,8 +239,12 @@ def load_config(
     output_queue_chunks: int | str | None = None,
     output_thread_queue_chunks: int | str | None = None,
     max_playback_buffer_ms: int | str | None = None,
+    output_prebuffer_ms: int | str | None = None,
     input_gate_rms: int | str | None = None,
     input_gate_hangover_ms: int | str | None = None,
+    gemini_activity_handling: str | None = None,
+    gemini_end_sensitivity: str | None = None,
+    gemini_silence_duration_ms: int | str | None = None,
     metrics_interval_sec: float | str | None = None,
     auto_reconnect: bool | None = None,
     max_reconnects: int | str | None = None,
@@ -206,7 +257,7 @@ def load_config(
             load_dotenv(dotenv_path=dotenv_path, override=False)
         env = os.environ
 
-    return AppConfig(
+    config = AppConfig(
         api_key=_env_value(env, "GEMINI_API_KEY"),
         input_device=_choose(input_device, env, "MEETING_INPUT_DEVICE"),
         output_device=_choose(output_device, env, "MEETING_OUTPUT_DEVICE"),
@@ -262,6 +313,12 @@ def load_config(
             "MEETING_MAX_PLAYBACK_BUFFER_MS",
             DEFAULT_MAX_PLAYBACK_BUFFER_MS,
         ),
+        output_prebuffer_ms=_choose_non_negative_int(
+            output_prebuffer_ms,
+            env,
+            "MEETING_OUTPUT_PREBUFFER_MS",
+            DEFAULT_OUTPUT_PREBUFFER_MS,
+        ),
         input_gate_rms=_choose_non_negative_int(
             input_gate_rms,
             env,
@@ -273,6 +330,34 @@ def load_config(
             env,
             "MEETING_INPUT_GATE_HANGOVER_MS",
             DEFAULT_INPUT_GATE_HANGOVER_MS,
+        ),
+        gemini_activity_handling=_parse_optional_alias(
+            _choose(
+                gemini_activity_handling,
+                env,
+                "MEETING_GEMINI_ACTIVITY_HANDLING",
+                DEFAULT_GEMINI_ACTIVITY_HANDLING,
+            ),
+            name="MEETING_GEMINI_ACTIVITY_HANDLING",
+            aliases=_GEMINI_ACTIVITY_HANDLING_ALIASES,
+            accepted="default, start_interrupts, no_interruption",
+        ),
+        gemini_end_sensitivity=_parse_optional_alias(
+            _choose(
+                gemini_end_sensitivity,
+                env,
+                "MEETING_GEMINI_END_SENSITIVITY",
+                DEFAULT_GEMINI_END_SENSITIVITY,
+            ),
+            name="MEETING_GEMINI_END_SENSITIVITY",
+            aliases=_GEMINI_END_SENSITIVITY_ALIASES,
+            accepted="default, low, high",
+        ),
+        gemini_silence_duration_ms=_choose_non_negative_int(
+            gemini_silence_duration_ms,
+            env,
+            "MEETING_GEMINI_SILENCE_DURATION_MS",
+            DEFAULT_GEMINI_SILENCE_DURATION_MS,
         ),
         metrics_interval_sec=_choose_non_negative_float(
             metrics_interval_sec,
@@ -299,6 +384,12 @@ def load_config(
             DEFAULT_DEBUG_EVENTS,
         ),
     )
+    if config.output_prebuffer_ms > config.max_playback_buffer_ms:
+        raise ConfigError(
+            "MEETING_OUTPUT_PREBUFFER_MS must be less than or equal to "
+            "MEETING_MAX_PLAYBACK_BUFFER_MS"
+        )
+    return config
 
 
 def require_api_key(config: AppConfig) -> str:

@@ -32,6 +32,10 @@ def _display_voice_name(voice_name: str | None) -> str:
     return voice_name or "auto"
 
 
+def _display_optional_config(value: str | None) -> str:
+    return value or "default"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="meeting_translator")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -63,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--output-queue-chunks", type=int, default=None)
         command.add_argument("--output-thread-queue-chunks", type=int, default=None)
         command.add_argument("--max-playback-buffer-ms", type=int, default=None)
+        command.add_argument("--output-prebuffer-ms", type=int, default=None)
         command.add_argument(
             "--input-gate-rms",
             type=int,
@@ -74,6 +79,22 @@ def build_parser() -> argparse.ArgumentParser:
             type=int,
             default=None,
             help="Keep low-RMS chunks for this many ms after speech is detected",
+        )
+        command.add_argument(
+            "--gemini-activity-handling",
+            default=None,
+            help="Gemini realtime activity handling: no_interruption, start_interrupts, or default",
+        )
+        command.add_argument(
+            "--gemini-end-sensitivity",
+            default=None,
+            help="Gemini end-of-speech sensitivity: low, high, or default",
+        )
+        command.add_argument(
+            "--gemini-silence-duration-ms",
+            type=int,
+            default=None,
+            help="Gemini non-speech duration before committing end-of-speech; 0 omits it",
         )
         command.add_argument("--metrics-interval-sec", type=float, default=None)
         command.add_argument(
@@ -109,8 +130,12 @@ def _config_from_args(args: argparse.Namespace):
         output_queue_chunks=getattr(args, "output_queue_chunks", None),
         output_thread_queue_chunks=getattr(args, "output_thread_queue_chunks", None),
         max_playback_buffer_ms=getattr(args, "max_playback_buffer_ms", None),
+        output_prebuffer_ms=getattr(args, "output_prebuffer_ms", None),
         input_gate_rms=getattr(args, "input_gate_rms", None),
         input_gate_hangover_ms=getattr(args, "input_gate_hangover_ms", None),
+        gemini_activity_handling=getattr(args, "gemini_activity_handling", None),
+        gemini_end_sensitivity=getattr(args, "gemini_end_sensitivity", None),
+        gemini_silence_duration_ms=getattr(args, "gemini_silence_duration_ms", None),
         metrics_interval_sec=getattr(args, "metrics_interval_sec", None),
         auto_reconnect=getattr(args, "auto_reconnect", None),
         max_reconnects=getattr(args, "max_reconnects", None),
@@ -138,6 +163,9 @@ def check_command(args: argparse.Namespace) -> int:
         source_language=config.source_language,
         voice_name=config.voice_name,
         echo_target_language=config.echo_target_language,
+        activity_handling=config.gemini_activity_handling,
+        end_sensitivity=config.gemini_end_sensitivity,
+        silence_duration_ms=config.gemini_silence_duration_ms,
     )
     translation_config = live_translation_config_dict(live_config)
 
@@ -160,6 +188,9 @@ def check_command(args: argparse.Namespace) -> int:
         f"target_language_code={translation_config['targetLanguageCode']}, "
         f"voice_name={_display_voice_name(config.voice_name)}, "
         f"echo_target_language={translation_config['echoTargetLanguage']}, "
+        f"activity_handling={_display_optional_config(config.gemini_activity_handling)}, "
+        f"end_sensitivity={_display_optional_config(config.gemini_end_sensitivity)}, "
+        f"silence_duration_ms={config.gemini_silence_duration_ms}, "
         f"config={type(live_config).__name__}"
     )
     print(
@@ -168,6 +199,7 @@ def check_command(args: argparse.Namespace) -> int:
         f"output_queue_chunks={config.output_queue_chunks}, "
         f"output_thread_queue_chunks={config.output_thread_queue_chunks}, "
         f"max_playback_buffer_ms={config.max_playback_buffer_ms}, "
+        f"output_prebuffer_ms={config.output_prebuffer_ms}, "
         f"input_gate_rms={config.input_gate_rms}, "
         f"input_gate_hangover_ms={config.input_gate_hangover_ms}, "
         f"metrics_interval_sec={config.metrics_interval_sec:g}, "
@@ -196,8 +228,12 @@ def _collect_runtime_metrics(
             "output_queue_chunks": config.output_queue_chunks,
             "output_thread_queue_chunks": config.output_thread_queue_chunks,
             "max_playback_buffer_ms": config.max_playback_buffer_ms,
+            "output_prebuffer_ms": config.output_prebuffer_ms,
             "input_gate_rms": config.input_gate_rms,
             "input_gate_hangover_ms": config.input_gate_hangover_ms,
+            "gemini_activity_handling": config.gemini_activity_handling,
+            "gemini_end_sensitivity": config.gemini_end_sensitivity,
+            "gemini_silence_duration_ms": config.gemini_silence_duration_ms,
             "metrics_interval_sec": config.metrics_interval_sec,
             "auto_reconnect": config.auto_reconnect,
             "max_reconnects": config.max_reconnects,
@@ -255,6 +291,7 @@ async def _metrics_reporter(
                 f"input_gate_suppressed={audio['input_gate_suppressed_chunks']} "
                 f"input_gate_kept={audio['input_gate_hangover_kept_chunks']} "
                 f"input_rms={audio['input_last_rms']} "
+                f"prebuffer_silence={audio['output_prebuffer_silence_callbacks']} "
                 f"dropped_output={audio['output_dropped_chunks']} "
                 f"input_overflows={audio['input_overflows']} "
                 f"reconnects={gemini['reconnect_count']} "
@@ -302,6 +339,7 @@ async def run_command(args: argparse.Namespace) -> int:
         stats=stats,
         thread_queue_size=config.output_thread_queue_chunks,
         max_playback_buffer_ms=config.max_playback_buffer_ms,
+        output_prebuffer_ms=config.output_prebuffer_ms,
     )
 
     def request_shutdown() -> None:
@@ -337,6 +375,9 @@ async def run_command(args: argparse.Namespace) -> int:
                 target_language=config.target_language,
                 voice_name=config.voice_name,
                 echo_target_language=config.echo_target_language,
+                activity_handling=config.gemini_activity_handling,
+                end_sensitivity=config.gemini_end_sensitivity,
+                silence_duration_ms=config.gemini_silence_duration_ms,
                 input_audio_queue=input_queue,
                 output_audio_queue=output_queue,
                 transcript_log=transcript_log,

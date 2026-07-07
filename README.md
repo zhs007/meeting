@@ -79,8 +79,12 @@ MEETING_INPUT_QUEUE_CHUNKS=8
 MEETING_OUTPUT_QUEUE_CHUNKS=8
 MEETING_OUTPUT_THREAD_QUEUE_CHUNKS=8
 MEETING_MAX_PLAYBACK_BUFFER_MS=800
+MEETING_OUTPUT_PREBUFFER_MS=300
 MEETING_INPUT_GATE_RMS=0
 MEETING_INPUT_GATE_HANGOVER_MS=800
+MEETING_GEMINI_ACTIVITY_HANDLING=no_interruption
+MEETING_GEMINI_END_SENSITIVITY=low
+MEETING_GEMINI_SILENCE_DURATION_MS=1200
 MEETING_METRICS_INTERVAL_SEC=10
 MEETING_AUTO_RECONNECT=true
 MEETING_MAX_RECONNECTS=0
@@ -95,7 +99,13 @@ MEETING_DEBUG_EVENTS=false
 
 设备名没有隐式默认值。未通过命令行、环境变量或 `.env` 指定设备时，`check` 和 `run` 会失败并提示先列设备。
 
-Gemini 原型默认使用 `MEETING_SOURCE_LANGUAGE=zh-CN` 作为本地运行摘要里的源语言记录标签，并写入 Gemini `system_instruction` 作为语言护栏；当前 Gemini API 不支持给 Live Translation 传入 `language_codes` 形式的源语言 hint。`MEETING_VOICE_NAME=Kore` 会固定输出声线，适合单人会议里保持译员声音稳定；如果想换固定声线，可用 `--voice-name Charon` 等 Gemini 预置 voice 名覆盖；如果要回到旧行为，让 Gemini 自己决定声线，可设置 `MEETING_VOICE_NAME=auto` 或传 `--voice-name auto`。`MEETING_INPUT_GATE_RMS=0` 表示不启用本地输入门限；如果出现静音、环境噪声或耳机摩擦声被翻译成奇怪句子，可从 `MEETING_INPUT_GATE_RMS=300` 和 `MEETING_INPUT_GATE_HANGOVER_MS=800` 开始试，低于门限且不在 hangover 窗口内的空闲输入会被显式抑制，不再持续送入 Gemini；hangover 窗口内的低 RMS 输入会保留，以避免切掉句尾。观察 metrics 里的 `input_rms`、`input_gate_suppressed`、`input_gate_kept`。如果一句话被切碎，先降到 `MEETING_INPUT_GATE_RMS=150` 或把 `MEETING_INPUT_GATE_HANGOVER_MS` 加到 `1200`；如果要完全关闭输入门限，设回 `0`。Gemini 原型默认使用低延迟本地队列：输入队列 8 个 100ms chunk，Gemini 输出 asyncio 队列 8 个 chunk，输出线程队列 8 个 chunk，播放缓冲最多 800ms。旧音频只会按明确低延迟策略丢弃，并在运行摘要中计数；输入队列溢出会显式停止本次运行，不会静默堆积多秒延迟。启动和 GoAway 重连期间会等 Gemini session ready 后再把麦克风音频放入输入队列，断开窗口里的输入 chunk 会作为 `input_dropped_while_disconnected` 计数。
+Gemini 原型默认使用 `MEETING_SOURCE_LANGUAGE=zh-CN` 作为本地运行摘要里的源语言记录标签，并写入 Gemini `system_instruction` 作为语言护栏；当前 Gemini API 不支持给 Live Translation 传入 `language_codes` 形式的源语言 hint。`MEETING_VOICE_NAME=Kore` 会固定输出声线，适合单人会议里保持译员声音稳定；如果想换固定声线，可用 `--voice-name Charon` 等 Gemini 预置 voice 名覆盖；如果要回到旧行为，让 Gemini 自己决定声线，可设置 `MEETING_VOICE_NAME=auto` 或传 `--voice-name auto`。
+
+Gemini 默认使用更保守的服务端活动检测：`MEETING_GEMINI_ACTIVITY_HANDLING=no_interruption` 避免新输入打断当前翻译输出，`MEETING_GEMINI_END_SENSITIVITY=low` 降低短停顿被判成句尾的概率，`MEETING_GEMINI_SILENCE_DURATION_MS=1200` 要求较长非语音间隔才提交 end-of-speech。如果要回到 Gemini 默认活动检测，可设置 `MEETING_GEMINI_ACTIVITY_HANDLING=default`、`MEETING_GEMINI_END_SENSITIVITY=default` 和 `MEETING_GEMINI_SILENCE_DURATION_MS=0`。
+
+`MEETING_INPUT_GATE_RMS=0` 表示不启用本地输入门限；如果出现静音、环境噪声或耳机摩擦声被翻译成奇怪句子，可从 `MEETING_INPUT_GATE_RMS=300` 和 `MEETING_INPUT_GATE_HANGOVER_MS=800` 开始试，低于门限且不在 hangover 窗口内的空闲输入会被显式抑制，不再持续送入 Gemini；hangover 窗口内的低 RMS 输入会保留，以避免切掉句尾。观察 metrics 里的 `input_rms`、`input_gate_suppressed`、`input_gate_kept`。如果一句话被切碎，优先调 Gemini 活动检测；只有确认噪声误触发时再调本地输入 gate。
+
+Gemini 原型默认使用低延迟本地队列：输入队列 8 个 100ms chunk，Gemini 输出 asyncio 队列 8 个 chunk，输出线程队列 8 个 chunk，播放缓冲最多 800ms。`MEETING_OUTPUT_PREBUFFER_MS=300` 会在开始播放或输出下溢后短暂预缓冲，缓和小段音频之间的停顿；设置为 `0` 可关闭。旧音频只会按明确低延迟策略丢弃，并在运行摘要中计数；输入队列溢出会显式停止本次运行，不会静默堆积多秒延迟。启动和 GoAway 重连期间会等 Gemini session ready 后再把麦克风音频放入输入队列，断开窗口里的输入 chunk 会作为 `input_dropped_while_disconnected` 计数。
 
 ### 列设备
 
@@ -114,6 +124,9 @@ python -m meeting_translator check \
   --source-language zh-CN \
   --target-language en \
   --voice-name Kore \
+  --gemini-activity-handling no_interruption \
+  --gemini-end-sensitivity low \
+  --gemini-silence-duration-ms 1200 \
   --input-gate-rms 0 \
   --input-gate-hangover-ms 800
 ```
@@ -123,7 +136,7 @@ python -m meeting_translator check \
 - `GEMINI_API_KEY` 存在，但不会打印 key 值。
 - 输入设备可按 16kHz mono int16 打开。
 - 输出设备可按 24kHz mono int16 打开。
-- Gemini 配置可构造为 Live Translation + 目标语言 + 源语言护栏 + 固定输出声线。
+- Gemini 配置可构造为 Live Translation + 目标语言 + 源语言护栏 + 固定输出声线 + 保守活动检测。
 - 100ms 输入 chunk 为 3200 bytes。
 - Gemini 低延迟队列、metrics、自动重连参数可解析。
 
@@ -140,6 +153,10 @@ GEMINI_API_KEY=your_key_here python -m meeting_translator run \
   --output-queue-chunks 8 \
   --output-thread-queue-chunks 8 \
   --max-playback-buffer-ms 800 \
+  --output-prebuffer-ms 300 \
+  --gemini-activity-handling no_interruption \
+  --gemini-end-sensitivity low \
+  --gemini-silence-duration-ms 1200 \
   --input-gate-rms 0 \
   --input-gate-hangover-ms 800 \
   --metrics-interval-sec 10 \

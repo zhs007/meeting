@@ -62,6 +62,8 @@ class AudioRuntimeStats:
     output_max_async_queue_depth: int = 0
     output_max_thread_queue_depth: int = 0
     output_max_playback_buffer_ms: int = 0
+    output_prebuffer_silence_callbacks: int = 0
+    output_prebuffer_forced_starts: int = 0
     callback_errors: list[str] = field(default_factory=list)
 
     def note_input_queue_depth(self, depth: int) -> None:
@@ -203,6 +205,7 @@ class RawAudioOutput:
         stats: AudioRuntimeStats,
         thread_queue_size: int,
         max_playback_buffer_ms: int,
+        output_prebuffer_ms: int = 0,
     ) -> None:
         import sounddevice as sd
 
@@ -216,6 +219,15 @@ class RawAudioOutput:
             * max_playback_buffer_ms
             // 1000
         )
+        self._output_prebuffer_bytes = (
+            OUTPUT_SAMPLE_RATE
+            * OUTPUT_CHANNELS
+            * PCM16_BYTES_PER_SAMPLE
+            * output_prebuffer_ms
+            // 1000
+        )
+        self._playback_started = output_prebuffer_ms <= 0
+        self._prebuffer_wait_bytes = 0
         self._stats = stats
         self._closed = asyncio.Event()
         self._pump_task: asyncio.Task[None] | None = None
@@ -263,6 +275,8 @@ class RawAudioOutput:
             dropped = bytes(self._playback_buffer)
             self._playback_buffer.clear()
             self._stats.record_output_drop(dropped, stale=True)
+        self._playback_started = self._output_prebuffer_bytes <= 0
+        self._prebuffer_wait_bytes = 0
 
     def thread_queue_depth(self) -> int:
         return self._thread_queue.qsize()
@@ -270,18 +284,49 @@ class RawAudioOutput:
     def playback_buffer_ms(self) -> int:
         return output_bytes_to_ms(len(self._playback_buffer))
 
-    def _callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
-        if status:
-            self._stats.callback_errors.append(f"output callback status: {status}")
-        expected = frames * OUTPUT_CHANNELS * PCM16_BYTES_PER_SAMPLE
-        while len(self._playback_buffer) < expected:
+    def _drain_thread_queue_until(self, minimum_bytes: int) -> None:
+        while len(self._playback_buffer) < minimum_bytes:
             try:
                 self._playback_buffer.extend(self._thread_queue.get_nowait())
                 self._stats.note_output_thread_queue_depth(self._thread_queue.qsize())
                 self._stats.note_playback_buffer_bytes(len(self._playback_buffer))
             except queue.Empty:
                 break
+
+    def _hold_for_prebuffer(self, outdata: Any, expected: int) -> bool:
+        prebuffer_bytes = getattr(self, "_output_prebuffer_bytes", 0)
+        if prebuffer_bytes <= 0 or getattr(self, "_playback_started", True):
+            return False
+        if len(self._playback_buffer) >= prebuffer_bytes:
+            self._playback_started = True
+            self._prebuffer_wait_bytes = 0
+            return False
+        if not self._playback_buffer:
+            self._prebuffer_wait_bytes = 0
+            return False
+        self._prebuffer_wait_bytes += expected
+        if self._prebuffer_wait_bytes >= prebuffer_bytes:
+            self._playback_started = True
+            self._prebuffer_wait_bytes = 0
+            self._stats.output_prebuffer_forced_starts += 1
+            return False
+        outdata[:] = b"\x00" * expected
+        self._stats.output_silence_callbacks += 1
+        self._stats.output_prebuffer_silence_callbacks += 1
+        return True
+
+    def _callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
+        if status:
+            self._stats.callback_errors.append(f"output callback status: {status}")
+        expected = frames * OUTPUT_CHANNELS * PCM16_BYTES_PER_SAMPLE
+        prebuffer_bytes = getattr(self, "_output_prebuffer_bytes", 0)
+        minimum_bytes = expected
+        if prebuffer_bytes > 0 and not getattr(self, "_playback_started", True):
+            minimum_bytes = max(expected, prebuffer_bytes)
+        self._drain_thread_queue_until(minimum_bytes)
         self._trim_playback_buffer_for_latency()
+        if self._hold_for_prebuffer(outdata, expected):
+            return
 
         if len(self._playback_buffer) >= expected:
             outdata[:] = self._playback_buffer[:expected]
@@ -296,9 +341,12 @@ class RawAudioOutput:
             outdata[:] = available + (b"\x00" * (expected - len(available)))
             self._stats.output_audio_callbacks_with_audio += 1
             self._stats.output_audio_bytes_played += len(available)
+            self._playback_started = prebuffer_bytes <= 0
         else:
             outdata[:] = b"\x00" * expected
             self._stats.output_silence_callbacks += 1
+            self._playback_started = prebuffer_bytes <= 0
+        self._prebuffer_wait_bytes = 0
 
     async def _pump(self) -> None:
         while not self._closed.is_set():

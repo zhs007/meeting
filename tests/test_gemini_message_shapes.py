@@ -127,6 +127,10 @@ def test_live_translation_config_uses_supported_transcription_config_and_voice()
     assert "stable interpreter persona" in config.system_instruction
     assert "do not invent transcript text" in config.system_instruction
     assert config.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
+    assert config.realtime_input_config.activity_handling == "NO_INTERRUPTION"
+    activity_detection = config.realtime_input_config.automatic_activity_detection
+    assert activity_detection.end_of_speech_sensitivity == "END_SENSITIVITY_LOW"
+    assert activity_detection.silence_duration_ms == 1200
     assert config.realtime_input_config.turn_coverage == "TURN_INCLUDES_ONLY_ACTIVITY"
 
 
@@ -135,3 +139,16 @@ def test_live_translation_config_can_restore_gemini_default_voice_behavior() -> 
 
     assert config.input_audio_transcription.language_codes is None
     assert config.speech_config is None
+
+
+def test_live_translation_config_can_omit_custom_activity_detection() -> None:
+    config = build_live_config(
+        "en",
+        source_language="zh-CN",
+        activity_handling=None,
+        end_sensitivity=None,
+        silence_duration_ms=0,
+    )
+
+    assert config.realtime_input_config.activity_handling is None
+    assert config.realtime_input_config.automatic_activity_detection is None

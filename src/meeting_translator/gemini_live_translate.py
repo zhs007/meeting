@@ -126,6 +126,9 @@ def build_live_config(
     source_language: str = "zh-CN",
     voice_name: str | None = "Kore",
     echo_target_language: bool = False,
+    activity_handling: str | None = "NO_INTERRUPTION",
+    end_sensitivity: str | None = "END_SENSITIVITY_LOW",
+    silence_duration_ms: int = 1200,
 ) -> Any:
     try:
         from google.genai import types
@@ -142,6 +145,22 @@ def build_live_config(
             ),
         )
 
+    automatic_activity_detection = None
+    if end_sensitivity is not None or silence_duration_ms > 0:
+        automatic_activity_detection = types.AutomaticActivityDetection(
+            end_of_speech_sensitivity=(
+                getattr(types.EndSensitivity, end_sensitivity)
+                if end_sensitivity is not None
+                else None
+            ),
+            silence_duration_ms=silence_duration_ms if silence_duration_ms > 0 else None,
+        )
+    activity_handling_value = (
+        getattr(types.ActivityHandling, activity_handling)
+        if activity_handling is not None
+        else None
+    )
+
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         system_instruction=_source_language_guard_instruction(source_language, target_language),
@@ -149,6 +168,8 @@ def build_live_config(
         output_audio_transcription=types.AudioTranscriptionConfig(),
         speech_config=speech_config,
         realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=automatic_activity_detection,
+            activity_handling=activity_handling_value,
             turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
         ),
     )
@@ -461,6 +482,9 @@ def _default_session_factory(
     target_language: str,
     voice_name: str | None,
     echo_target_language: bool,
+    activity_handling: str | None,
+    end_sensitivity: str | None,
+    silence_duration_ms: int,
 ) -> tuple[Callable[[], AsyncContextManager[Any]], Callable[[bytes], Any]]:
     try:
         from google import genai
@@ -473,6 +497,9 @@ def _default_session_factory(
         source_language=source_language,
         voice_name=voice_name,
         echo_target_language=echo_target_language,
+        activity_handling=activity_handling,
+        end_sensitivity=end_sensitivity,
+        silence_duration_ms=silence_duration_ms,
     )
     client = genai.Client(api_key=api_key)
 
@@ -492,6 +519,9 @@ async def run_live_translation(
     target_language: str,
     voice_name: str | None,
     echo_target_language: bool,
+    activity_handling: str | None = "NO_INTERRUPTION",
+    end_sensitivity: str | None = "END_SENSITIVITY_LOW",
+    silence_duration_ms: int = 1200,
     input_audio_queue: asyncio.Queue[bytes],
     output_audio_queue: asyncio.Queue[bytes],
     transcript_log: TranscriptLogger,
@@ -514,6 +544,9 @@ async def run_live_translation(
             target_language=target_language,
             voice_name=voice_name,
             echo_target_language=echo_target_language,
+            activity_handling=activity_handling,
+            end_sensitivity=end_sensitivity,
+            silence_duration_ms=silence_duration_ms,
         )
         blob_factory = blob_factory or default_blob_factory
     else:

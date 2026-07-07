@@ -3,9 +3,13 @@ from __future__ import annotations
 import pytest
 
 from meeting_translator.config import (
+    DEFAULT_GEMINI_ACTIVITY_HANDLING,
+    DEFAULT_GEMINI_END_SENSITIVITY,
+    DEFAULT_GEMINI_SILENCE_DURATION_MS,
     DEFAULT_INPUT_QUEUE_CHUNKS,
     DEFAULT_MAX_PLAYBACK_BUFFER_MS,
     DEFAULT_OUTPUT_QUEUE_CHUNKS,
+    DEFAULT_OUTPUT_PREBUFFER_MS,
     ConfigError,
     load_config,
     require_api_key,
@@ -42,6 +46,10 @@ def test_cli_env_default_priority() -> None:
     assert config.input_queue_chunks == DEFAULT_INPUT_QUEUE_CHUNKS
     assert config.output_queue_chunks == DEFAULT_OUTPUT_QUEUE_CHUNKS
     assert config.max_playback_buffer_ms == DEFAULT_MAX_PLAYBACK_BUFFER_MS
+    assert config.output_prebuffer_ms == DEFAULT_OUTPUT_PREBUFFER_MS
+    assert config.gemini_activity_handling == DEFAULT_GEMINI_ACTIVITY_HANDLING
+    assert config.gemini_end_sensitivity == DEFAULT_GEMINI_END_SENSITIVITY
+    assert config.gemini_silence_duration_ms == DEFAULT_GEMINI_SILENCE_DURATION_MS
 
 
 def test_empty_device_env_does_not_select_default_device() -> None:
@@ -103,8 +111,12 @@ def test_low_latency_config_cli_env_dotenv_default_priority(
         "MEETING_OUTPUT_QUEUE_CHUNKS=6\n"
         "MEETING_OUTPUT_THREAD_QUEUE_CHUNKS=7\n"
         "MEETING_MAX_PLAYBACK_BUFFER_MS=600\n"
+        "MEETING_OUTPUT_PREBUFFER_MS=250\n"
         "MEETING_INPUT_GATE_RMS=250\n"
         "MEETING_INPUT_GATE_HANGOVER_MS=900\n"
+        "MEETING_GEMINI_ACTIVITY_HANDLING=start_interrupts\n"
+        "MEETING_GEMINI_END_SENSITIVITY=high\n"
+        "MEETING_GEMINI_SILENCE_DURATION_MS=700\n"
         "MEETING_METRICS_INTERVAL_SEC=3.5\n"
         "MEETING_AUTO_RECONNECT=false\n"
         "MEETING_MAX_RECONNECTS=2\n"
@@ -117,8 +129,12 @@ def test_low_latency_config_cli_env_dotenv_default_priority(
         "MEETING_OUTPUT_QUEUE_CHUNKS",
         "MEETING_OUTPUT_THREAD_QUEUE_CHUNKS",
         "MEETING_MAX_PLAYBACK_BUFFER_MS",
+        "MEETING_OUTPUT_PREBUFFER_MS",
         "MEETING_INPUT_GATE_RMS",
         "MEETING_INPUT_GATE_HANGOVER_MS",
+        "MEETING_GEMINI_ACTIVITY_HANDLING",
+        "MEETING_GEMINI_END_SENSITIVITY",
+        "MEETING_GEMINI_SILENCE_DURATION_MS",
         "MEETING_METRICS_INTERVAL_SEC",
         "MEETING_AUTO_RECONNECT",
         "MEETING_MAX_RECONNECTS",
@@ -134,8 +150,12 @@ def test_low_latency_config_cli_env_dotenv_default_priority(
     assert config.output_queue_chunks == 11
     assert config.output_thread_queue_chunks == 7
     assert config.max_playback_buffer_ms == 600
+    assert config.output_prebuffer_ms == 250
     assert config.input_gate_rms == 250
     assert config.input_gate_hangover_ms == 900
+    assert config.gemini_activity_handling == "START_OF_ACTIVITY_INTERRUPTS"
+    assert config.gemini_end_sensitivity == "END_SENSITIVITY_HIGH"
+    assert config.gemini_silence_duration_ms == 700
     assert config.metrics_interval_sec == 3.5
     assert config.auto_reconnect is False
     assert config.max_reconnects == 2
@@ -160,6 +180,37 @@ def test_input_gate_rms_rejects_negative_value() -> None:
 def test_input_gate_hangover_rejects_negative_value() -> None:
     with pytest.raises(ConfigError, match="MEETING_INPUT_GATE_HANGOVER_MS"):
         load_config(env={"MEETING_INPUT_GATE_HANGOVER_MS": "-1"})
+
+
+def test_gemini_activity_defaults_can_be_explicitly_omitted() -> None:
+    config = load_config(
+        env={
+            "MEETING_GEMINI_ACTIVITY_HANDLING": "default",
+            "MEETING_GEMINI_END_SENSITIVITY": "default",
+            "MEETING_GEMINI_SILENCE_DURATION_MS": "0",
+            "MEETING_OUTPUT_PREBUFFER_MS": "0",
+        }
+    )
+
+    assert config.gemini_activity_handling is None
+    assert config.gemini_end_sensitivity is None
+    assert config.gemini_silence_duration_ms == 0
+    assert config.output_prebuffer_ms == 0
+
+
+def test_gemini_activity_config_rejects_unknown_alias() -> None:
+    with pytest.raises(ConfigError, match="MEETING_GEMINI_END_SENSITIVITY"):
+        load_config(env={"MEETING_GEMINI_END_SENSITIVITY": "medium"})
+
+
+def test_output_prebuffer_cannot_exceed_playback_buffer_cap() -> None:
+    with pytest.raises(ConfigError, match="MEETING_OUTPUT_PREBUFFER_MS"):
+        load_config(
+            env={
+                "MEETING_MAX_PLAYBACK_BUFFER_MS": "200",
+                "MEETING_OUTPUT_PREBUFFER_MS": "300",
+            }
+        )
 
 
 def test_missing_gemini_key_error_does_not_leak_secret_name_value() -> None:

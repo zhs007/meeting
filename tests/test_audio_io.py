@@ -61,6 +61,71 @@ def test_output_callback_drops_oldest_playback_buffer_when_latency_cap_is_exceed
     assert output._stats.output_dropped_bytes == 4
 
 
+def test_output_prebuffer_holds_short_audio_before_playback_starts() -> None:
+    output = object.__new__(RawAudioOutput)
+    output._thread_queue = queue.Queue()
+    output._playback_buffer = bytearray()
+    output._max_playback_buffer_bytes = 10_000
+    output._output_prebuffer_bytes = 8
+    output._playback_started = False
+    output._prebuffer_wait_bytes = 0
+    output._stats = AudioRuntimeStats()
+    output._thread_queue.put(b"abcd")
+    outdata = bytearray(2)
+
+    output._callback(outdata, frames=1, time_info=None, status=None)
+
+    assert outdata == b"\x00\x00"
+    assert output._playback_buffer == bytearray(b"abcd")
+    assert output._stats.output_prebuffer_silence_callbacks == 1
+    assert output._stats.output_silence_callbacks == 1
+
+
+def test_output_prebuffer_forces_short_audio_after_wait_budget() -> None:
+    output = object.__new__(RawAudioOutput)
+    output._thread_queue = queue.Queue()
+    output._playback_buffer = bytearray()
+    output._max_playback_buffer_bytes = 10_000
+    output._output_prebuffer_bytes = 6
+    output._playback_started = False
+    output._prebuffer_wait_bytes = 0
+    output._stats = AudioRuntimeStats()
+    output._thread_queue.put(b"abcd")
+    first = bytearray(2)
+    second = bytearray(2)
+    third = bytearray(2)
+
+    output._callback(first, frames=1, time_info=None, status=None)
+    output._callback(second, frames=1, time_info=None, status=None)
+    output._callback(third, frames=1, time_info=None, status=None)
+
+    assert first == b"\x00\x00"
+    assert second == b"\x00\x00"
+    assert third == b"ab"
+    assert output._playback_buffer == bytearray(b"cd")
+    assert output._stats.output_prebuffer_silence_callbacks == 2
+    assert output._stats.output_prebuffer_forced_starts == 1
+
+
+def test_output_prebuffer_starts_when_buffer_reaches_target() -> None:
+    output = object.__new__(RawAudioOutput)
+    output._thread_queue = queue.Queue()
+    output._playback_buffer = bytearray()
+    output._max_playback_buffer_bytes = 10_000
+    output._output_prebuffer_bytes = 6
+    output._playback_started = False
+    output._prebuffer_wait_bytes = 0
+    output._stats = AudioRuntimeStats()
+    output._thread_queue.put(b"abcdefgh")
+    outdata = bytearray(2)
+
+    output._callback(outdata, frames=1, time_info=None, status=None)
+
+    assert outdata == b"ab"
+    assert output._playback_buffer == bytearray(b"cdefgh")
+    assert output._stats.output_prebuffer_silence_callbacks == 0
+
+
 def test_default_output_latency_budget_is_below_five_seconds() -> None:
     queue_ms = (DEFAULT_OUTPUT_QUEUE_CHUNKS + DEFAULT_OUTPUT_THREAD_QUEUE_CHUNKS) * INPUT_CHUNK_MS
     total_ms = queue_ms + DEFAULT_MAX_PLAYBACK_BUFFER_MS
